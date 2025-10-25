@@ -1,0 +1,304 @@
+- SourceFile: tests/fixtures/data/kalaka.jpg
+  ExifTool:ExifToolVersion: 12.76
+  File:FileName: kalaka.jpg
+  File:Directory: tests/fixtures/data
+  File:FileSize: 73 kB
+  File:FileModifyDate: 2025:10:25 23:11:47+02:00
+  File:FileAccessDate: 2025:10:25 23:34:10+02:00
+  File:FileInodeChangeDate: 2025:10:25 23:34:10+02:00
+  File:FilePermissions: -rw-r--r--
+  File:FileType: JPEG
+  File:FileTypeExtension: jpg
+  File:MIMEType: image/jpeg
+  File:ExifByteOrder: Little-endian (Intel, II)
+  File:CurrentIPTCDigest: 8029870d829af363b38018c2964aa65b
+  File:ImageWidth: 384
+  File:ImageHeight: 512
+  File:EncodingProcess: Progressive DCT, Huffman coding
+  File:BitsPerSample: 8
+  File:ColorComponents: 3
+  File:YCbCrSubSampling: YCbCr4:4:4 (1 1)
+  JFIF:JFIFVersion: 1.01
+  JFIF:ResolutionUnit: inches
+  JFIF:XResolution: 180
+  JFIF:YResolution: 180
+  EXIF:Make: Canon
+  EXIF:Model: Canon PowerShot S30
+  EXIF:Orientation: Horizontal (normal)
+  EXIF:XResolution: 180
+  EXIF:YResolution: 180
+  EXIF:ResolutionUnit: inches
+  EXIF:Software: GIMP 2.10.32
+  EXIF:ModifyDate: 2025:10:25 23:11:47
+  EXIF:YCbCrPositioning: Centered
+  EXIF:ExifVersion: '0200'
+  EXIF:DateTimeOriginal: 2002:12:15 11:37:45
+  EXIF:CreateDate: 2002:12:15 11:37:45
+  EXIF:OffsetTimeOriginal: +01:00
+  EXIF:ComponentsConfiguration: Y, Cb, Cr, -
+  EXIF:ShutterSpeedValue: 1/13
+  EXIF:ApertureValue: 5.0
+  EXIF:ExposureCompensation: '+1'
+  EXIF:FocalLength: 21.3 mm
+  EXIF:UserComment: ''
+  EXIF:FlashpixVersion: '0100'
+  EXIF:ColorSpace: sRGB
+  EXIF:ExifImageWidth: 1536
+  EXIF:ExifImageHeight: 2048
+  EXIF:FocalPlaneXResolution: 7349.282297
+  EXIF:FocalPlaneYResolution: 7366.906475
+  EXIF:FocalPlaneResolutionUnit: inches
+  EXIF:ImageUniqueID: 4077c1b449812d374f2775a19afe7536
+  EXIF:GPSVersionID: 2.3.0.0
+  EXIF:GPSLatitudeRef: North
+  EXIF:GPSLatitude: 47.490413
+  EXIF:GPSLongitudeRef: East
+  EXIF:GPSLongitude: 19.018604
+  EXIF:GPSAltitudeRef: Above Sea Level
+  EXIF:SubfileType: Reduced-resolution image
+  EXIF:ImageWidth: 192
+  EXIF:ImageHeight: 256
+  EXIF:BitsPerSample: 8 8 8
+  EXIF:Compression: JPEG (old-style)
+  EXIF:PhotometricInterpretation: YCbCr
+  EXIF:SamplesPerPixel: 3
+  EXIF:ThumbnailOffset: 1162
+  EXIF:ThumbnailLength: 12661
+  EXIF:ThumbnailImage: (Binary data 12661 bytes, use -b option to extract)
+  MakerNotes:FileNumber: 118-1893
+  MakerNotes:CanonFirmwareVersion: Firmware Version 00.00
+  MakerNotes:FocalType: Zoom
+  MakerNotes:FocalLength: 21.3125 mm
+  MakerNotes:FocalPlaneXSize: 5.44 mm
+  MakerNotes:FocalPlaneYSize: 7.24 mm
+  MakerNotes:CanonImageType: IMG:PowerShot S30 JPEG
+  MakerNotes:OwnerName: UMANN Kornel
+  MakerNotes:MacroMode: Normal
+  MakerNotes:SelfTimer: 'Off'
+  MakerNotes:Quality: Superfine
+  MakerNotes:CanonFlashMode: 'Off'
+  MakerNotes:ContinuousDrive: Single
+  MakerNotes:FocusMode: Single
+  MakerNotes:RecordMode: Unknown (0)
+  MakerNotes:CanonImageSize: Large
+  MakerNotes:EasyMode: Manual
+  MakerNotes:DigitalZoom: None
+  MakerNotes:Contrast: Normal
+  MakerNotes:Saturation: Normal
+  MakerNotes:Sharpness: 0
+  MakerNotes:CameraISO: 800
+  MakerNotes:MeteringMode: Evaluative
+  MakerNotes:FocusRange: Not Known
+  MakerNotes:CanonExposureMode: Shutter speed priority AE
+  MakerNotes:MaxFocalLength: 21.3125 mm
+  MakerNotes:MinFocalLength: 7.09375 mm
+  MakerNotes:FocalUnits: 32/mm
+  MakerNotes:MaxAperture: 5
+  MakerNotes:MinAperture: 8
+  MakerNotes:FlashActivity: 0
+  MakerNotes:FlashBits: (none)
+  MakerNotes:FocusContinuous: Single
+  MakerNotes:AESetting: Normal AE
+  MakerNotes:ImageStabilization: 'Off'
+  MakerNotes:DisplayAperture: 4.9
+  MakerNotes:ZoomSourceWidth: 2048
+  MakerNotes:ZoomTargetWidth: 2048
+  MakerNotes:AutoISO: 100
+  MakerNotes:MeasuredEV: 5.0
+  MakerNotes:TargetAperture: 5
+  MakerNotes:TargetExposureTime: 1/13
+  MakerNotes:ExposureCompensation: '+1'
+  MakerNotes:WhiteBalance: Custom
+  MakerNotes:SlowShutter: 'Off'
+  MakerNotes:SequenceNumber: 0
+  MakerNotes:OpticalZoomCode: n/a
+  MakerNotes:FlashGuideNumber: 0
+  MakerNotes:AFPointsInFocus: Center
+  MakerNotes:FlashExposureComp: 0
+  MakerNotes:AutoExposureBracketing: 'Off'
+  MakerNotes:AEBBracketValue: 0
+  MakerNotes:ControlMode: n/a
+  MakerNotes:BulbDuration: 0
+  MakerNotes:CameraType: n/a
+  XMP:XMPToolkit: XMP Core 4.4.0-Exiv2
+  XMP:DocumentID: gimp:docid:gimp:001b1913-015f-45d8-8aa4-03d317355b94
+  XMP:InstanceID: xmp.iid:8f6d7ea7-8ef5-4308-a654-3f673f796bd1
+  XMP:OriginalDocumentID: xmp.did:2502a675-8edd-46cf-9928-c8c36185ee60
+  XMP:Format: image/jpeg
+  XMP:Api: 2.0
+  XMP:Platform: Windows
+  XMP:TimeStamp: '1761426707788236'
+  XMP:Version: 2.10.32
+  XMP:CountryCode: hu
+  XMP:Location: MOM
+  XMP:City: Budapest
+  XMP:Country: Magyarország
+  XMP:State: Pest megye
+  XMP:CreatorTool: GIMP 2.10
+  XMP:MetadataDate: 2025:10:25T23:11:47+02:00
+  XMP:ModifyDate: 2025:10:25T23:11:47+02:00
+  XMP:Rating: 4
+  XMP:LocationShown:
+  - City: Budapest
+    CountryName: Magyarország
+    ProvinceState: Pest megye
+    Sublocation: MOM
+  XMP:RegionInfo:
+    AppliedToDimensions:
+      H: 2048
+      Unit: pixel
+      W: 1536
+    RegionList:
+    - Area:
+        H: 0.0937514305333028
+        Unit: normalized
+        W: 0.10415808346685
+        X: 0.805340657663844
+        Y: 0.2905317769131
+      Name: Radványi Balázs
+      Type: Face
+    - Area:
+        H: 0.08886854352636
+        Unit: normalized
+        W: 0.0872358281834134
+        X: 0.235027084763867
+        Y: 0.277836270695048
+      Name: Becze Gábor
+      Type: Face
+  XMP:History:
+  - Action: saved
+    Changed: /
+    InstanceID: xmp.iid:bd0d6db1-a4ff-437c-a0e8-7529438ff64d
+    SoftwareAgent: Gimp 2.10 (Windows)
+    When: 2025:10:25 23:11:47
+  XMP:Creator:
+  - Umann Kornél
+  XMP:Subject:
+  - ©Umann Kornél
+  - '-'
+  - '@bent'
+  - '@Budapest'
+  - '@Magyarország'
+  - '@MOM'
+  - '@Pest megye'
+  - Advent
+  - betlehemes
+  - celeb
+  - Kaláka
+  - Kaláka-koncert
+  - kalap
+  - kucsma
+  - MINUS
+  - nagybőgő
+  - pásztorbot
+  - színház etc.
+  - zenekar
+  ICC_Profile:ProfileCMMType: Little CMS
+  ICC_Profile:ProfileVersion: 4.3.0
+  ICC_Profile:ProfileClass: Display Device Profile
+  ICC_Profile:ColorSpaceData: 'RGB '
+  ICC_Profile:ProfileConnectionSpace: 'XYZ '
+  ICC_Profile:ProfileDateTime: 2025:10:25 10:27:45
+  ICC_Profile:ProfileFileSignature: acsp
+  ICC_Profile:PrimaryPlatform: Microsoft Corporation
+  ICC_Profile:CMMFlags: Not Embedded, Independent
+  ICC_Profile:DeviceManufacturer: ''
+  ICC_Profile:DeviceModel: ''
+  ICC_Profile:DeviceAttributes: Reflective, Glossy, Positive, Color
+  ICC_Profile:RenderingIntent: Perceptual
+  ICC_Profile:ConnectionSpaceIlluminant: 0.9642 1 0.82491
+  ICC_Profile:ProfileCreator: Little CMS
+  ICC_Profile:ProfileID: 0
+  ICC_Profile:ProfileDescription: GIMP built-in sRGB
+  ICC_Profile:ProfileCopyright: Public Domain
+  ICC_Profile:MediaWhitePoint: 0.9642 1 0.82491
+  ICC_Profile:ChromaticAdaptation: 1.04788 0.02292 -0.05022 0.02959 0.99048 -0.01707
+    -0.00925 0.01508 0.75168
+  ICC_Profile:RedMatrixColumn: 0.43604 0.22249 0.01392
+  ICC_Profile:BlueMatrixColumn: 0.14305 0.06061 0.71393
+  ICC_Profile:GreenMatrixColumn: 0.38512 0.7169 0.09706
+  ICC_Profile:RedTRC: (Binary data 32 bytes, use -b option to extract)
+  ICC_Profile:GreenTRC: (Binary data 32 bytes, use -b option to extract)
+  ICC_Profile:BlueTRC: (Binary data 32 bytes, use -b option to extract)
+  ICC_Profile:ChromaticityChannels: 3
+  ICC_Profile:ChromaticityColorant: Unknown
+  ICC_Profile:ChromaticityChannel1: 0.64 0.33002
+  ICC_Profile:ChromaticityChannel2: 0.3 0.60001
+  ICC_Profile:ChromaticityChannel3: 0.15001 0.06
+  ICC_Profile:DeviceMfgDesc: GIMP
+  ICC_Profile:DeviceModelDesc: sRGB
+  IPTC:CodedCharacterSet: UTF8
+  IPTC:EnvelopeRecordVersion: 4
+  IPTC:Country-PrimaryLocationCode: HUN
+  IPTC:Keywords:
+  - ©Umann Kornél
+  - '-'
+  - '@bent'
+  - '@Budapest'
+  - '@Magyarország'
+  - '@MOM'
+  - '@Pest megye'
+  - Advent
+  - betlehemes
+  - celeb
+  - Kaláka
+  - Kaláka-koncert
+  - kalap
+  - kucsma
+  - MINUS
+  - nagybőgő
+  - pásztorbot
+  - színház etc.
+  - zenekar
+  IPTC:Province-State: Pest megye
+  IPTC:ApplicationRecordVersion: 4
+  Composite:DriveMode: Single-frame Shooting
+  Composite:ISO: 800
+  Composite:Lens: 7.1 - 21.3 mm
+  Composite:ShootingMode: Shutter speed priority AE
+  Composite:Aperture: 5.0
+  Composite:ImageSize: 384x512
+  Composite:Megapixels: 0.197
+  Composite:ScaleFactor35efl: 4.9
+  Composite:ShutterSpeed: 1/13
+  Composite:SubSecDateTimeOriginal: 2002:12:15 11:37:45+01:00
+  Composite:GPSLatitude: '+47.49041300'
+  Composite:GPSLongitude: '+19.01860400'
+  Composite:City: Budapest
+  Composite:Country: Magyarország
+  Composite:CreateDate: 2002:12:15 11:37:45
+  Composite:Creator:
+  - Umann Kornél
+  Composite:DateTimeOriginal: 2002:12:15 11:37:45+01:00
+  Composite:Keywords:
+  - ©Umann Kornél
+  - '-'
+  - '@bent'
+  - '@Budapest'
+  - '@Magyarország'
+  - '@MOM'
+  - '@Pest megye'
+  - Advent
+  - betlehemes
+  - celeb
+  - Kaláka
+  - Kaláka-koncert
+  - kalap
+  - kucsma
+  - MINUS
+  - nagybőgő
+  - pásztorbot
+  - színház etc.
+  - zenekar
+  Composite:Location: MOM
+  Composite:ModifyDate: 2025:10:25 23:11:47
+  Composite:Orientation: Horizontal (normal)
+  Composite:Rating: 4
+  Composite:State: Pest megye
+  Composite:Lens35efl: '7.1 - 21.3 mm (35 mm equivalent: 34.7 - 104.4 mm)'
+  Composite:CircleOfConfusion: 0.006 mm
+  Composite:FOV: 19.6 deg
+  Composite:FocalLength35efl: '21.3 mm (35 mm equivalent: 104.4 mm)'
+  Composite:GPSPosition: +47.49041300, +19.01860400
+  Composite:HyperfocalDistance: 14.74 m
+  Composite:LightValue: 5.3

@@ -1,0 +1,52 @@
+# Pre-commit hooks configuration
+# See https://pre-commit.com for more information
+
+repos:
+  # Black - Python code formatter
+  - repo: https://github.com/psf/black
+    rev: 24.10.0
+    hooks:
+      - id: black
+
+  # isort - Python import sorter
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: mixed-line-ending
+
+  # Run tests before push
+  - repo: local
+    hooks:
+      - id: pylint
+        name: pylint
+        entry: python -m pylint
+        args: [--fail-under=10.0]
+        language: system
+        types: [python]
+        require_serial: true
+      - id: check-clean-tree
+        name: check git tree is clean
+        entry: bash
+        args: ['-c', 'if [ -n "$(git status --porcelain)" ]; then echo "Error: Git working directory must be clean before push"; git status --short; exit 1; fi']
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+        always_run: true
+      - id: pytest
+        name: pytest
+        entry: python -m pytest tests/
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

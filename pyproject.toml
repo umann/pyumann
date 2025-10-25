@@ -1,0 +1,97 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ==============================================================================
+# CODE STYLE: Line length is 119 for all tools (Black, Pylint, isort, Flake8)
+# ==============================================================================
+
+[project]
+name = "umann"
+version = "0.0.0"
+description = "My Python tools"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML",
+  "click",
+  "munch",
+  "pyexiftool",
+]
+
+[project.optional-dependencies]
+dev = [
+  "black",
+  "isort",
+  "pylint",
+  "pytest-cov",
+  "pytest",
+  "pre-commit",
+  "munch",
+  "parameterized",
+]
+
+[project.scripts]
+et = "umann.metadata.et:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.black]
+line-length = 119
+
+[tool.pylint]
+max-line-length = 119
+
+[tool.pylint.main]
+# Files or directories to be skipped. They should be base names, not paths.
+ignore = [".venv"]
+#source-roots = ["."]  # so that in tests it finds imports like test.iqs.helpers
+
+# Disable persistent mode (no .pylint.d/ cache directory)
+persistent = false
+
+[tool.pylint."MESSAGES CONTROL"]
+# allowed-redefined-builtins = [ "id" ]
+
+disable = [
+#     "bad-inline-option",
+#     "deprecated-pragma",
+#     "file-ignored",
+#     "fixme",
+#     "locally-disabled",
+#     "logging-fstring-interpolation",
+#     "missing-class-docstring",
+#     "missing-function-docstring",
+#     "missing-module-docstring",
+#     "protected-access",
+#     "raw-checker-failed",
+#     "suppressed-message",
+#     "unnecessary-ellipsis",
+#     "use-symbolic-message-instead",
+     "use-dict-literal",
+#     "useless-suppression",
+#     "wrong-import-order",
+]
+
+[tool.flake8]
+max-line-length = 119
+
+[tool.isort]
+line_length = 119
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+  "unit: fast, isolated tests",
+  "integration: tests requiring external services or I/O",
+  "system: end-to-end flows",
+  "regression: guards previously broken or specified behaviors",
+]
+addopts = "-ra"
