@@ -3,8 +3,6 @@
 This module focuses on repository- and project-root related path helpers.
 """
 
-from __future__ import annotations
-
 import os
 import typing as t
 from functools import lru_cache

@@ -1,3 +1,6 @@
-src/umann/metadata/et.py: 97.1
+src/umann/geo/__init__.py: 53.8
+src/umann/geo/tz4d.py: 99.0
+src/umann/metadata/chk_tz.py: 80.6
+src/umann/metadata/et.py: 90.5
 src/umann/utils/data_utils.py: 80.7
 src/umann/utils/fs_utils.py: 100.0

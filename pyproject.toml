@@ -17,6 +17,8 @@ dependencies = [
   "click",
   "munch",
   "pyexiftool",
+  "shapely",
+  "rtree",
 ]
 
 [project.optional-dependencies]
@@ -51,6 +53,9 @@ ignore = [".venv"]
 # Disable persistent mode (no .pylint.d/ cache directory)
 persistent = false
 
+# Ignore patterns for path-specific disables
+ignore-paths = []
+
 [tool.pylint."MESSAGES CONTROL"]
 # allowed-redefined-builtins = [ "id" ]
 
@@ -73,6 +78,10 @@ disable = [
 #     "useless-suppression",
 #     "wrong-import-order",
 ]
+
+[tool.pylint.tests]
+# Disable docstring checks for test files
+disable = ["missing-function-docstring"] #, "missing-class-docstring", "missing-module-docstring"]
 
 [tool.flake8]
 max-line-length = 119
