@@ -16,6 +16,7 @@ import exiftool
 import yaml
 from munch import Munch, munchify
 
+from umann.metadata.chk_tz import TzMismatchError, check_timezone_consistency
 from umann.utils.data_utils import get_multi, pop_multi, set_multi
 from umann.utils.fs_utils import project_root
 
@@ -65,17 +66,6 @@ def simple_out(metadata: dict[str, t.Any]) -> dict[str, t.Any]:
     md_yaml = munchify(read_metadata_yaml())
     for path, val_to_del in md_yaml._del.items():  # pylint: disable=protected-access
         pop_multi(metadata, path, default=None, pop_list_items=True, val_to_del=val_to_del)
-        # breakpoint()
-        # if val_to_del is None:
-        #     try:
-        #         pop_multi(metadata, path, default=None, pop_list_items=True, val_to_del=val_to_del)
-        #     except Exception as e:
-        #         breakpoint()
-        #         raise
-        # else:
-        #     val = get_multi(metadata, path, None)
-        #     if val is not None and str(val) in map(str, listify(val_to_del)):
-        #         pop_multi(metadata, path, default=None, pop_list_items=True)
 
     return metadata
 
@@ -194,6 +184,7 @@ def set_metadata(fname_s: str | t.Iterable[str], tags, /, **kwargs):
 @click.command()
 @click.option("--dictify", "-d", is_flag=True, help="Use dict[fname, metadata] output format even if 1 fname is given")
 @click.option("--set", "tags_yaml", help="YAML or JSON format string of tags to set")
+@click.option("--chk-tz", is_flag=True, help="Check if timezone tags are consistent with GPS coordinates")
 @click.option(
     "--transform",
     "transformations",
@@ -219,24 +210,32 @@ def main(**kwargs):
         tags = yaml.safe_load(tags_yaml)
         set_metadata(fnames, tags, **tr_kwargs)
     else:
-        metadata = get_metadata_multi(fnames, **tr_kwargs) if multi else get_metadata(fnames[0], **tr_kwargs)
-        print(yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True).strip())
+        # Fetch metadata
+        metadata_map = (
+            get_metadata_multi(fnames, **tr_kwargs) if multi else {fnames[0]: get_metadata(fnames[0], **tr_kwargs)}
+        )
+
+        # If --chk-tz provided, perform checks and raise on issues
+        if kwargs.get("chk_tz", False):
+            errors = []
+            for fname, md in metadata_map.items():
+                try:
+                    check_timezone_consistency(md)
+                except TzMismatchError as e:
+                    errors.append(f"{fname}: {e}")
+            if errors:
+                raise click.ClickException("\n".join(["Timezone consistency check failed:"] + errors))
+            # Success: no output required
+            return
+
+        # Default: print metadata
+        print(
+            yaml.safe_dump(
+                metadata_map if multi else next(iter(metadata_map.values())), sort_keys=False, allow_unicode=True
+            ).strip()
+        )
 
 
 # entry point `et` is defined in pyproject.toml
-
 if __name__ == "__main__":
-    md = yaml.safe_load(
-        """
-XMP:RegionInfo:
-  RegionList:
-  - Extensions:
-      XMP-Umann:FaceID: 2f2384a1f59cbb03
-      XMP-Umann:FaceNamespace: http://umann.hu/kornel/picasa/1.0/
-      XMP-Umann:FaceRect64: aaf15604b24d615d
-      XMP-Umann:FaceType: Face
-    Name: Umann Kornél
-    Type: Face
-"""
-    )
-    print(yaml.dump(simple_out(md), allow_unicode=True).strip())
+    main()

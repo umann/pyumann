@@ -11,8 +11,6 @@ Behavior:
   - Warns if baseline updated and git tree was clean (helps catch accidental updates)
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -70,7 +68,7 @@ def main() -> int:
             continue
         # Fail if coverage falls (beyond rounding tolerance)
         if new_pct + 1e-9 < old_pct:
-            errors.append(f"  {fname}: {old_pct}% -> {new_pct}% ({new_pct - old_pct}%)")
+            errors.append(f"  {fname}: {old_pct}% -> {new_pct}% ({new_pct - old_pct:.1f}%)")
 
     if errors:
         print("\n".join(["Coverage regression detected:"] + errors))

@@ -73,3 +73,10 @@ Thumbs.db
 *nemkell*
 *proba*
 *delme*
+
+# Data to be downloaded/built
+data/tz/expectedZoneOverlaps.json
+data/tz/osmBoundarySources.json
+data/tz/timezones.json
+data/tz/tz_index.pkl
+data/tz/geojson/
