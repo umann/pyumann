@@ -1,0 +1,65 @@
+%Image::ExifTool::UserDefined = (
+    'Image::ExifTool::Composite' => {
+    },
+);
+
+use Image::ExifTool::MWG;
+eval{Image::ExifTool::MWG::Load();}; if (!$@) {
+$Image::ExifTool::MWG::strict=1;
+
+# Specify default ExifTool option values
+# (see the Options function documentation for available options)
+%Image::ExifTool::UserDefined::Options = (
+    CoordFormat => '%+.8f',  # change default GPS coordinate format
+    Unknown => 1,
+    ListSep => q{; },
+);
+%Image::ExifTool::UserDefined = (
+    'Image::ExifTool::File' => {
+     FileSize => {
+            Groups => { 1 => 'System' },
+            Notes => 'NO TO: print conversion uses historic prefixes: 1 kB = 1024 bytes, etc.',
+            PrintConv => sub { @_ },
+        },
+    },
+);
+}
+
+$Image::ExifTool::UserDefined{'Image::ExifTool::XMP::Main'} = {
+	Umann => {
+		SubDirectory => {
+			TagTable => 'Image::ExifTool::UserDefined::Umann',
+		},
+	},
+};
+
+%Image::ExifTool::UserDefined::Umann = (
+    GROUPS => { 0 => 'XMP', 1 => 'XMP-Umann', 2 => 'Image' },
+    NAMESPACE => { 'Umann' => 'http://umann.hu/exif/xmp/1.0/' },
+    WRITABLE  => 'string', # (default to string-type tags)
+    RollFilmNamespace => {},
+    RollFilmName => {},                                      # uniq id
+    RollFilmFrameSequenceNumber => { Writable => 'integer' },  # 1 .. 37 (or whatever, up to RollFilmFrameSequenceTotalNumberReal)
+    RollFilmFrameName   => {},                         # '0102'
+    RollFilmFrameSequenceTotalNumberNominal => { Writable => 'integer' },  # 24, 36
+    RollFilmFrameSequenceTotalNumberReal    => { Writable => 'integer' },  # 24, 25, 36, 37 etc
+    RollFilmMake        => {},                         # 'Kodak
+    RollFilmModel       => {},                         # 'Kodachrome 100'
+    RollFilmISOSpeed    => { Writable => 'integer' },  # 100
+    RollFilmColored     => { Writable => 'boolean' },  # 'True', 'False'
+    RollFilmImageSize   => {},                         # '24 x 36 mm'
+    RollFilmFormat      => {},                         # '135 Film'
+    RollFilmComment     => {},                         # '135 Film'
+    TakenDateEarliest   => {},                         # At least YYYY:MM:DD (and not much use of more but who knows)
+    TakenDateEarliestRationale => {},                         #
+    TakenDateLatest     => {},                         # At least YYYY:MM:DD (and not much use of more but who knows)
+    TakenDateLatestRationale   => {},                  #
+    FaceID              => {},
+    FaceNamespace       => {},
+    FaceRect64          => {},
+    FaceType            => {},
+    FaceIgnorable       => { Writable => 'boolean' },  # 'True', 'False'
+);
+
+#------------------------------------------------------------------------------
+1;  #end

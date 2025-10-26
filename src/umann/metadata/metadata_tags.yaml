@@ -1,0 +1,255 @@
+_eq:
+# members within below  groups must have the same value if they exist; otherwise raise exception
+-
+  - QuickTime:CreateDate
+  - QuickTime:MediaCreateDate
+  - QuickTime:MediaModifyDate
+  - QuickTime:ModifyDate
+  - QuickTime:TrackCreateDate
+  - QuickTime:TrackModifyDate
+  - Umann:ShootDateTime
+-
+  - QuickTime:ImageHeight
+  - QuickTime:SourceImageHeight
+-
+  - QuickTime:ImageWidth
+  - QuickTime:SourceImageWidth
+-
+  - QuickTime:Duration
+  - QuickTime:MediaDuration
+-
+  - Composite:SubSecCreateDate
+  - Composite:SubSecDateTimeOriginal
+
+_del:
+# key without value (null/None value) to be deleted unconditionally; those with value if value matches string-wise
+  SourceFile:
+  File:FileName:
+  File:Directory:
+  File:FileModifyDate:
+  File:FileAccessDate:
+  File:FileInodeChangeDate:
+  Composite:AvgBitrate:
+  Composite:GPSAltitude: 0 m
+  Composite:GPSAltitudeRef: Above Sea Level
+  XMP:GPSAltitudeRef: Above Sea Level
+  XMP:GPSImgDirection: 317
+  XMP:GPSImgDirectionRef: Magnetic North
+  Composite:GPSLatitudeRef:
+  Composite:GPSLongitudeRef:
+  Composite:Megapixels:
+  Composite:Orientation: Horizontal (normal)
+  Composite:Rotation: ''
+  Composite:SubSecCreateDate:
+  Composite:SubSecDateTimeOriginal:
+  EXIF:ColorSpace: sRGB
+  EXIF:ComponentsConfiguration: Y, Cb, Cr, -
+  EXIF:Compression: JPEG (old-style)
+  EXIF:Contrast: Normal
+  EXIF:Copyright: ''
+  EXIF:CustomRendered: Normal
+  EXIF:DigitalZoomRatio: 1
+  EXIF:ExifVersion: '0231'
+  EXIF:ExposureCompensation: [0, '']
+  EXIF:ExposureMode: Auto
+  EXIF:ExposureProgram: Program AE
+  EXIF:FileSource: Digital Camera
+  EXIF:Flash: Auto, Did not fire
+  EXIF:FlashpixVersion: '0100'
+  EXIF:GainControl: None
+  EXIF:GPSAltitudeRef: Above Sea Level
+  EXIF:GPSImgDirectionRef: Magnetic North
+  EXIF:GPSLatitudeRef: North
+  EXIF:GPSLongitudeRef: East
+  EXIF:GPSMapDatum: WGS-84
+  EXIF:GPSVersionID: 2.2.0.0
+  EXIF:InteropIndex: R98 - DCF basic file (sRGB)
+  EXIF:InteropVersion: '0100'
+  EXIF:LightSource: Unknown
+  EXIF:MeteringMode: Multi-segment
+  EXIF:Orientation: Horizontal (normal)
+  EXIF:Rating: 0
+  EXIF:ResolutionUnit: inches
+  EXIF:Saturation: Normal
+  EXIF:SceneCaptureType: Standard
+  EXIF:SensitivityType: Standard Output Sensitivity
+  EXIF:Sharpness: Normal
+  EXIF:Software: Version 1.0
+  EXIF:ThumbnailImage:
+  EXIF:UserComment: ''
+  EXIF:WaterDepth: ['-0', 0]
+  EXIF:WhiteBalance: Auto
+  EXIF:XResolution: 72
+  EXIF:YCbCrPositioning: Co-sited
+  EXIF:YResolution: 72
+  ExifTool:ExifToolVersion:
+  File:BitsPerSample: 8
+  File:ColorComponents: 3
+  File:EncodingProcess: Baseline DCT, Huffman coding
+  File:ExifByteOrder: Little-endian (Intel, II)
+  File:FilePermissions:
+  File:FileSize:
+  File:FileType: JPEG
+  File:FileTypeExtension: jpg
+  File:MIMEType: image/jpeg
+  File:YCbCrSubSampling: YCbCr4:2:2 (2 1)
+  IPTC:ApplicationRecordVersion: 4
+  IPTC:CodedCharacterSet: UTF8
+  IPTC:EnvelopeRecordVersion: 4
+  MakerNotes:DateTDateTime2ime1:
+  MakerNotes:DateTime1:
+  MakerNotes:PreviewImageLength:
+  MakerNotes:ThumbnailHeight:
+  MakerNotes:ThumbnailLength:
+  MakerNotes:ThumbnailWidth:
+  MakerNotes:Unknown_saut: ''
+  MinorVersion: 0.0.0
+  QuickTime:AudioBitsPerSample: 16
+  QuickTime:AudioChannels: 2
+  QuickTime:AudioFormat: mp4a
+  QuickTime:AudioSampleRate: 48000
+  QuickTime:Balance: [0, '']
+  QuickTime:BitDepth: 24
+  QuickTime:CompatibleBrands: isom; iso2; mp41
+  QuickTime:CompressorID: hev1
+  QuickTime:CreateDate: 0000:00:00 00:00:00
+  QuickTime:CurrentTime: 0 s
+  QuickTime:Encoder: Lavf58.45.100
+  QuickTime:GraphicsMode: srcCopy
+  QuickTime:HandlerDescription: SoundHandler
+  QuickTime:HandlerType: Metadata
+  QuickTime:HandlerVendorID: Apple
+  QuickTime:MajorBrand: MP4 Base Media v1 [IS0 14496-12:2003]
+  QuickTime:MatrixStructure: 1 0 0 0 1 0 0 0 1
+  QuickTime:MediaCreateDate:
+  QuickTime:MediaDuration:
+  QuickTime:MediaHeaderVersion: [0, '']
+  QuickTime:MediaLanguageCode: jpn
+  QuickTime:MediaModifyDate:
+  QuickTime:MinorVersion: 0.2.0
+  QuickTime:ModifyDate:
+  QuickTime:MovieHeaderVersion: [0, '']
+  QuickTime:NextTrackID: 3
+  QuickTime:OpColor: 0 0 0
+  QuickTime:PixelAspectRatio: '1:1'
+  QuickTime:PosterTime: 0 s
+  QuickTime:PreferredRate: 1
+  QuickTime:PreferredVolume: 100.00%
+  QuickTime:PreviewDuration: 0 s
+  QuickTime:PreviewTime: 0 s
+  QuickTime:SelectionDuration: 0 s
+  QuickTime:SelectionTime: 0 s
+  QuickTime:SourceImageHeight:
+  QuickTime:SourceImageWidth:
+  QuickTime:TrackCreateDate:
+  QuickTime:TrackHeaderVersion: [0, '']
+  QuickTime:TrackID: 2
+  QuickTime:TrackLayer: [0, '']
+  QuickTime:TrackModifyDate:
+  QuickTime:TrackVolume: 100.00%
+  QuickTime:VideoFieldOrder: Progressive; 0
+  QuickTime:VideoFullRangeFlag: ''
+  QuickTime:XResolution: 72
+  QuickTime:YResolution: 72
+  Umann:ShootDateTime: 0000:00:00 00:00:00
+  XMP:GPSMapDatum: WGS-84
+  XMP:RegionInfo.AppliedToDimensions:
+  XMP:RegionInfo.RegionList.[].Area:
+  XMP:RegionInfo.RegionList.[].Extensions.XMP-Umann:FaceNamespace: http://umann.hu/kornel/picasa/1.0/
+  XMP:RegionInfo.RegionList.[].Extensions.XMP-Umann:FaceType: Face
+  XMP:RegionInfo.RegionList.[].Type: Face
+  XMP:XMPToolkit: Image::ExifTool 12.42
+_convert:
+  x_separated:
+  - Composite:ImageSize
+  signed_8f_comma_separated:
+  - Composite:GPSPosition
+  flatten_if_not_multiple:
+  - Composite:Creator
+  - XMP:Creator
+  - XMP:LocationShown
+_type:
+  float:
+  - Composite:Aperture
+  - Composite:CircleOfConfusion
+  - Composite:FOV
+  - Composite:GPSLatitude
+  - Composite:GPSLongitude
+  - Composite:HyperfocalDistance
+  - Composite:LightValue
+  - Composite:ScaleFactor35efl
+  - Composite:ShutterSpeed
+  - EXIF:AmbientTemperature
+  - EXIF:ApertureValue
+  - EXIF:BrightnessValue
+  - EXIF:ExposureCompensation
+  - EXIF:ExposureTime
+  - EXIF:FNumber
+  - EXIF:FocalLength
+  - EXIF:GPSLatitude
+  - EXIF:GPSLongitude
+  - EXIF:MaxApertureValue
+  - Quicktime:VideoFrameRate
+  - XMP:RegionInfo.RegionList.[].Area.H
+  - XMP:RegionInfo.RegionList.[].Area.W
+  - XMP:RegionInfo.RegionList.[].Area.X
+  - XMP:RegionInfo.RegionList.[].Area.Y
+  int:
+  - Composite:FocalLength35efl
+  - Composite:Orientation
+  - EXIF:Acceleration
+  - EXIF:ColorSpace
+  - EXIF:Compression
+  - EXIF:DigitalZoomRatio
+  - EXIF:ExifImageHeight
+  - EXIF:ExifImageWidth
+  - EXIF:ExposureMode
+  - EXIF:ExposureProgram
+  - EXIF:FileSource
+  - EXIF:Flash
+  - EXIF:FocalLengthIn35mmFormat
+  - EXIF:GainControl
+  - EXIF:GPSImgDirection
+  - EXIF:ImageHeight
+  - EXIF:ImageWidth
+  - EXIF:ISO
+  - EXIF:MeteringMode
+  - EXIF:Orientation
+  - EXIF:Pressure
+  - EXIF:ResolutionUnit
+  - EXIF:SceneCaptureType
+  - EXIF:SensitivityType
+  - EXIF:SubSecTimeDigitized
+  - EXIF:SubSecTimeOriginal
+  - EXIF:ThumbnailLength
+  - EXIF:ThumbnailOffset
+  - EXIF:XResolution
+  - EXIF:YCbCrPositioning
+  - EXIF:YResolution
+  - IPTC:ApplicationRecordVersion
+  - IPTC:EnvelopeRecordVersion
+  - QuickTime:AudioBitsPerSample
+  - QuickTime:AudioChannels
+  - QuickTime:AudioSampleRate
+  - QuickTime:Balance
+  - QuickTime:BitDepth
+  - QuickTime:ImageHeight
+  - QuickTime:ImageWidth
+  - QuickTime:LocationInformation
+  - QuickTime:MediaDataOffset
+  - QuickTime:MediaDataSize
+  - QuickTime:MediaDuration
+  - QuickTime:MediaHeaderVersion
+  - QuickTime:MediaTimeScale
+  - QuickTime:MovieHeaderVersion
+  - QuickTime:NextTrackID
+  - QuickTime:PreferredRate
+  - QuickTime:TimeScale
+  - QuickTime:TrackHeaderVersion
+  - QuickTime:TrackID
+  - QuickTime:TrackLayer
+  - QuickTime:VideoFrameRate
+  - QuickTime:XResolution
+  - QuickTime:YResolution
+  - XMP:RegionInfo.AppliedToDimensions.H
+  - XMP:RegionInfo.AppliedToDimensions.W
