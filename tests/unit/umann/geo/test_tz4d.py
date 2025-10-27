@@ -2,6 +2,7 @@
 
 import time
 from datetime import datetime, timedelta
+from unittest import mock
 
 import pytest
 
@@ -22,6 +23,7 @@ LONDON = (51.5074, -0.1278)  # Europe/London
 TOKYO = (35.6762, 139.6503)  # Asia/Tokyo
 SYDNEY = (-33.8688, 151.2093)  # Australia/Sydney
 LOS_ANGELES = (34.0522, -118.2437)  # America/Los_Angeles
+MEDITERRANEO_FRA_OLBIA_E_LIVORNO = (41.81099325, 9.84918343)
 
 
 def test_tz_from_coords_paris():
@@ -52,10 +54,25 @@ def test_tz_from_coords_los_angeles():
     assert tz_from_coords(*LOS_ANGELES) == "America/Los_Angeles"
 
 
-def test_tz_from_coords_ocean_returns_none():
-    # Middle of Pacific Ocean
+def test_tz_from_coords_mediterraneo():
+    assert tz_from_coords(*MEDITERRANEO_FRA_OLBIA_E_LIVORNO) == "Europe/Rome"
+
+
+def test_tz_from_coords_mediterraneo_no_tolerance():
+    assert tz_from_coords(*MEDITERRANEO_FRA_OLBIA_E_LIVORNO, tolerance_lon_delta_deg=0) is None
+
+
+def test_tz_offset_for_mediterraneo_fra_olbia_e_livorno():
+    # Offset for 2011-07-01T12:00:00 at : 2:00:00 (Europe/Rome)
+    dt = datetime(2011, 7, 1, 12, 0, 0)
+    off = tz_offset_from_tz_unaware_dt(*MEDITERRANEO_FRA_OLBIA_E_LIVORNO, dt)
+    assert off == timedelta(hours=2)
+
+
+def test_tz_from_coords_ocean_returns_nearest():
+    # Middle of Pacific Ocean should fall back to nearest timezone
     result = tz_from_coords(0.0, -160.0)
-    assert result is None
+    assert isinstance(result, str) and len(result) > 0
 
 
 def test_offset_normal_day_paris():
@@ -84,6 +101,22 @@ def test_offset_summer_new_york():
     dt = datetime(2024, 7, 15, 12, 0, 0)
     off = tz_offset_from_tz_unaware_dt(*NEW_YORK, dt)
     assert off == timedelta(hours=-4)
+
+
+def test_offset_no_tz():
+    # July 15, 2024 12:00 local in New York -> UTC-4
+    with mock.patch("umann.geo.tz4d.tz_from_coords", return_value=None):
+        dt = datetime(2024, 7, 15, 12, 0, 0)
+        off = tz_offset_from_tz_unaware_dt(*NEW_YORK, dt)
+        assert off is None
+
+
+def test_local_time_from_timestamp_no_tz():
+    with mock.patch("umann.geo.tz4d.tz_from_coords", return_value=None):
+        tz_name, offset, local_dt = local_time_from_timestamp(*NEW_YORK, 1704888000)
+        assert tz_name is None
+        assert offset is None
+        assert local_dt is None
 
 
 @pytest.mark.parametrize(
@@ -122,12 +155,12 @@ def test_local_time_from_timestamp_new_york():
     assert local_dt.hour == 7
 
 
-def test_local_time_from_timestamp_ocean_returns_none():
-    # Middle of ocean
+def test_local_time_from_timestamp_ocean_returns_nearest():
+    # Middle of ocean should fall back to nearest timezone
     tz_name, offset, local_dt = local_time_from_timestamp(0.0, -160.0, 1720965000)
-    assert tz_name is None
-    assert offset is None
-    assert local_dt is None
+    assert isinstance(tz_name, str) and len(tz_name) > 0
+    assert offset is not None
+    assert local_dt is not None
 
 
 def test_parse_iso_with_z():
@@ -156,11 +189,11 @@ def test_parse_iso_naive():
     assert dt.hour == 12
 
 
-def test_tz_offset_for_ocean_returns_none():
-    # Middle of ocean - no timezone
+def test_tz_offset_for_ocean_returns_nearest():
+    # Middle of ocean - should fall back to nearest timezone
     dt = datetime(2024, 7, 15, 12, 0, 0)
     off = tz_offset_from_tz_unaware_dt(0.0, -160.0, dt)
-    assert off is None
+    assert off is not None
 
 
 def test_offset_tokyo_no_dst():

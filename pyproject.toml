@@ -81,7 +81,7 @@ disable = [
 
 [tool.pylint.tests]
 # Disable docstring checks for test files
-disable = ["missing-function-docstring"] #, "missing-class-docstring", "missing-module-docstring"]
+disable = ["missing-function-docstring"]
 
 [tool.flake8]
 max-line-length = 119
