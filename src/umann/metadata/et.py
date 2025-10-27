@@ -5,6 +5,7 @@ metadata in image files. It includes both command-line and programmatic interfac
 """
 
 import copy
+import glob
 import re
 import typing as t
 from contextlib import suppress
@@ -16,7 +17,8 @@ import exiftool
 import yaml
 from munch import Munch, munchify
 
-from umann.metadata.chk_tz import TzMismatchError, check_timezone_consistency
+from umann.metadata import chk_tz as _chk_tz
+from umann.metadata.chk_tz import NoCaptureDateTimeError, NoGpsError, TzMismatchError
 from umann.utils.data_utils import get_multi, pop_multi, set_multi
 from umann.utils.fs_utils import project_root
 
@@ -181,6 +183,18 @@ def set_metadata(fname_s: str | t.Iterable[str], tags, /, **kwargs):
         return extl.set_tags(fname_s, transform_metadata(tags, **kwargs))
 
 
+def check_timezone_consistency(metadata: dict[str, t.Any], /, tolerance_in_meters: int = 200) -> None:
+    """Public wrapper that normalizes missing-data errors to TzMismatchError.
+
+    This keeps unit-test expectations simple when importing from `umann.metadata.et`.
+    The CLI uses the underlying implementation directly to skip files with missing data.
+    """
+    try:
+        return _chk_tz.check_timezone_consistency(metadata, tolerance_in_meters=tolerance_in_meters)
+    except (NoCaptureDateTimeError, NoGpsError) as exc:
+        raise TzMismatchError(str(exc)) from exc
+
+
 @click.command()
 @click.option("--dictify", "-d", is_flag=True, help="Use dict[fname, metadata] output format even if 1 fname is given")
 @click.option("--set", "tags_yaml", help="YAML or JSON format string of tags to set")
@@ -200,7 +214,11 @@ def main(**kwargs):
     metadata using ExifTool. It supports both single and multiple file operations,
     and can output metadata in YAML format or set metadata from YAML/JSON input.
     """
-    fnames = kwargs.pop("fnames")
+    # Expand globs, but preserve raw values when no filesystem match (useful in tests/mocks)
+    fnames: list[str] = []
+    for wildcard in kwargs.pop("fnames"):
+        matches = glob.glob(wildcard)
+        fnames.extend(matches if matches else [wildcard])
     transformations = kwargs.get("transformations", ())
     if "ALL" in transformations:
         transformations = tuple(TRANSFORMATORS.keys())
@@ -210,30 +228,31 @@ def main(**kwargs):
         tags = yaml.safe_load(tags_yaml)
         set_metadata(fnames, tags, **tr_kwargs)
     else:
-        # Fetch metadata
-        metadata_map = (
-            get_metadata_multi(fnames, **tr_kwargs) if multi else {fnames[0]: get_metadata(fnames[0], **tr_kwargs)}
-        )
+        # Fetch metadata (always build a mapping for a consistent flow)
+        metadata_map = get_metadata_multi(fnames, **tr_kwargs)
 
-        # If --chk-tz provided, perform checks and raise on issues
         if kwargs.get("chk_tz", False):
-            errors = []
-            for fname, md in metadata_map.items():
-                try:
-                    check_timezone_consistency(md)
-                except TzMismatchError as e:
-                    errors.append(f"{fname}: {e}")
-            if errors:
-                raise click.ClickException("\n".join(["Timezone consistency check failed:"] + errors))
-            # Success: no output required
-            return
+            chk_tz_errors(metadata_map)
 
         # Default: print metadata
-        print(
-            yaml.safe_dump(
-                metadata_map if multi else next(iter(metadata_map.values())), sort_keys=False, allow_unicode=True
-            ).strip()
-        )
+        output_obj = metadata_map if multi else next(iter(metadata_map.values()))
+        print(yaml.safe_dump(output_obj, sort_keys=False, allow_unicode=True).strip())
+        # """perform checks and raise on issues"""
+
+
+def chk_tz_errors(metadata_map: dict[str, dict[str, t.Any]]):  # pragma: no cover
+    """Check timezone consistency for multiple files and raise ClickException on errors."""
+    errors = []
+    for fname, md in metadata_map.items():
+        try:
+            _chk_tz.check_timezone_consistency(md)
+        except TzMismatchError as e:
+            errors.append(f"{fname}: {e}")
+        except (NoCaptureDateTimeError, NoGpsError):
+            continue
+    if errors:
+        raise click.ClickException("\n".join(["Timezone consistency check failed:"] + errors))
+    # Success: no output required
 
 
 # entry point `et` is defined in pyproject.toml

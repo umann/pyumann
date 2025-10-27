@@ -1,5 +1,6 @@
 """Timezone consistency check helpers for ExifTool metadata."""
 
+import math
 import re
 import typing as t
 from contextlib import suppress
@@ -8,8 +9,20 @@ from datetime import datetime, timedelta
 from umann.geo.tz4d import tz_from_coords, tz_offset_from_tz_unaware_dt
 
 
-class TzMismatchError(Exception):
+class MetadataError(Exception):
+    """Base class for metadata-related errors."""
+
+
+class TzMismatchError(MetadataError):
     """Exception raised for timezone mismatches in metadata."""
+
+
+class NoCaptureDateTimeError(MetadataError):
+    """Exception raised for missing capture date/time in metadata."""
+
+
+class NoGpsError(MetadataError):
+    """Exception raised for missing GPS coordinates in metadata."""
 
 
 def _parse_exif_datetime(dt_str: str) -> datetime:
@@ -59,7 +72,7 @@ def _extract_lat_lon(md: dict[str, t.Any]) -> tuple[float, float]:
                 return float(lat), float(lon)
             except Exception:  # pylint: disable=broad-exception-caught
                 pass
-    raise TzMismatchError("No GPS coordinates in metadata (latitude/longitude missing)")
+    raise NoGpsError("No GPS coordinates in metadata (latitude/longitude missing)")
 
 
 def _extract_offset(md: dict[str, t.Any]) -> str:
@@ -116,14 +129,14 @@ def _extract_offset(md: dict[str, t.Any]) -> str:
 
     # XMP variants and QuickTime if they contain recognizable offsets
 
-    keys = (
+    keys = [
         "XMP:TimeZone",
         "XMP:Timezone",
         "XMP:TimeZoneOffset",
         "XMP:TimezoneOffset",
         "QuickTime:TimeZone",
         "QuickTime:Timezone",
-    )
+    ]
     for key in keys:
         val = md.get(key)
         if val:
@@ -149,10 +162,11 @@ def _extract_naive_local_datetime(md: dict[str, t.Any]) -> datetime:
         val = md.get(key)
         if val:
             return _parse_exif_datetime(str(val))
-    raise TzMismatchError("Missing capture datetime (e.g., EXIF:DateTimeOriginal)")
+    raise NoCaptureDateTimeError("Missing capture datetime (e.g., EXIF:DateTimeOriginal)")
 
 
-def check_timezone_consistency(md: dict[str, t.Any]) -> None:
+# pylint: disable=too-many-locals
+def check_timezone_consistency(md: dict[str, t.Any], tolerance_in_meters: int | float = 200) -> None:
     """Check that timezone offset tags agree with GPS coords for the capture time.
 
     Raises TzMismatchError on any inconsistency or missing required data.
@@ -163,9 +177,37 @@ def check_timezone_consistency(md: dict[str, t.Any]) -> None:
 
     expected_td = tz_offset_from_tz_unaware_dt(lat, lon, dt_local)
     if expected_td is None:
-        tz_name = tz_from_coords(lat, lon)
-        raise TzMismatchError(f"Cannot resolve timezone at coords ({lat}, {lon}); tz={tz_name}")
+        raise TzMismatchError(f"Cannot resolve timezone at coords ({lat}, {lon}); tz={tz_from_coords(lat, lon)}")
     expected = _format_offset_hhmm(expected_td)
 
     if expected != declared:
+        # Border tolerance: if a neighboring timezone within the specified
+        # distance has the declared offset at this wall time, accept it.
+        try:
+            lat_rad = math.radians(lat)
+            # Rough meters-per-degree approximations
+            m_per_deg_lat = 111_320.0
+            m_per_deg_lon = max(1e-6, m_per_deg_lat * math.cos(lat_rad))
+            dlat = float(tolerance_in_meters) / m_per_deg_lat
+            dlon = float(tolerance_in_meters) / m_per_deg_lon
+            candidates = (
+                (lat + dlat, lon),
+                (lat - dlat, lon),
+                (lat, lon + dlon),
+                (lat, lon - dlon),
+                (lat + dlat, lon + dlon),
+                (lat + dlat, lon - dlon),
+                (lat - dlat, lon + dlon),
+                (lat - dlat, lon - dlon),
+            )
+            for la, lo in candidates:
+                td = tz_offset_from_tz_unaware_dt(la, lo, dt_local)
+                if td is None:
+                    continue
+                if _format_offset_hhmm(td) == declared:
+                    return  # close to a border; treat as acceptable
+        except Exception:  # pylint: disable=broad-exception-caught
+            # On any unexpected error in tolerance logic, fall back to strict behavior
+            pass
+
         raise TzMismatchError(f"Timezone offset mismatch: {declared=}, {expected=} at ({lat}, {lon}) for {dt_local}")

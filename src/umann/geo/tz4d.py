@@ -20,8 +20,10 @@ from zoneinfo import ZoneInfo
 
 from munch import Munch
 from rtree import index
+from shapely.errors import GEOSException
 from shapely.geometry import Point, shape
-from shapely.prepared import prep
+from shapely.geometry.base import BaseGeometry
+from shapely.prepared import PreparedGeometry, prep
 
 from umann.utils.fs_utils import project_root
 
@@ -311,13 +313,13 @@ def download_geojson(
 
 
 @lru_cache(maxsize=1)
-def _build_tz_index():
-    """Build rtree index + prepared geometries from GeoJSON data (cached).
+def _build_tz_index() -> tuple[index.Index, list[PreparedGeometry], list[str], list[BaseGeometry]]:
+    """Build rtree index + prepared and raw geometries from GeoJSON data (cached).
 
     Automatically rebuilds pickle if source files are newer (makefile-style).
     Loads from pickle if available, otherwise builds from GeoJSON.
 
-    Returns (rtree_index, list[PreparedGeometry], list[tz_name]).
+    Returns (rtree_index, list[PreparedGeometry], list[tz_name], list[Geometry]).
     """
     tz_data_dir = Path(project_root()) / "data" / "tz"
     geojson_dir = tz_data_dir / "geojson"
@@ -358,31 +360,67 @@ def _build_tz_index():
         for i, bounds in enumerate(index_data.bounds):
             idx.insert(i, bounds)
 
-        return idx, geoms, index_data.tz_names
+        return idx, geoms, index_data.tz_names, index_data.geoms
     except Exception as e:  # pragma: no cover  # pylint: disable=broad-exception-caught
         raise RuntimeError(f"Failed to load timezone index from {index_pkl}: {e}") from e
 
 
-def tz_from_coords(lat: float, lon: float) -> str | None:
+def tz_from_coords(lat: float, lon: float, tolerance_lon_delta_deg: int | float = 7.5) -> str | None:
     """Return IANA timezone name from lat/lon using high-resolution polygons.
 
     Uses timezone-boundary-builder GeoJSON data in data/tz/geojson/.
-    Returns None if point not in any timezone polygon.
+    Fallback behavior when no polygon contains the point:
+    - Prefer the nearest timezone whose centroid longitude is within ±7.5° (±30 minutes)
+      of the given longitude (accounting for dateline wrap-around).
+    - If none match that constraint, return the absolute nearest timezone by geometry distance.
+    tolerance_lon_delta_deg=0 disables fallback.
+    Returns None if no timezone can be determined.
     """
     try:
-        idx, geoms, tz_names = _build_tz_index()
+        idx, geoms_prep, tz_names, geoms_raw = _build_tz_index()
     except (ImportError, FileNotFoundError) as e:  # pragma: no cover
         raise RuntimeError(f"Cannot load timezone polygons: {e}") from e
 
     # GeoJSON uses (lon, lat) order
     pt = Point(lon, lat)
 
-    # Query rtree for candidate polygons, then test containment
+    # 1) Exact containment via prepared geoms and rtree candidates
     for i in idx.intersection((lon, lat, lon, lat)):
-        if geoms[i].contains(pt):
+        if geoms_prep[i].contains(pt):
             return tz_names[i]
 
-    return None
+    if not tolerance_lon_delta_deg:
+        return None
+
+    # 2) No exact match. Choose nearest with longitude constraint first, else absolute nearest.
+    def lon_delta_deg(a: float, b: float) -> float:
+        """Minimal absolute longitude difference in degrees accounting for wrap-around."""
+        d = abs(a - b)
+        return 360.0 - d if d > 180.0 else d
+
+    nearest_idx = None
+    nearest_dist = float("inf")
+    constrained_idx = None
+    constrained_dist = float("inf")
+
+    for i, geom in enumerate(geoms_raw):
+        # Fast reject using bbox distance could be added, but N~400 is acceptable to scan
+        dist = pt.distance(geom)
+        if dist < nearest_dist:
+            nearest_dist = dist
+            nearest_idx = i
+
+        # Check ±7.5° centroid-longitude constraint
+        try:
+            cen_lon = float(geom.centroid.x)
+        except (ValueError, TypeError, AttributeError, GEOSException):  # pragma: no cover
+            continue
+        if lon_delta_deg(lon, cen_lon) <= 7.5 and dist < constrained_dist:
+            constrained_dist = dist
+            constrained_idx = i
+
+    pick = constrained_idx if constrained_idx is not None else nearest_idx
+    return tz_names[pick] if pick is not None else None
 
 
 def local_time_from_timestamp(lat: float, lon: float, ts: float):
@@ -398,7 +436,7 @@ def local_time_from_timestamp(lat: float, lon: float, ts: float):
     return tz_name, dt_local.utcoffset(), dt_local
 
 
-def tz_offset_from_tz_unaware_dt(lat: float, lon: float, dt_naive: datetime):
+def tz_offset_from_tz_unaware_dt(lat: float, lon: float, dt_naive: datetime) -> str | None:
     """Compute UTC offset for a naive local datetime at given coordinates.
 
     Rules:
@@ -467,5 +505,5 @@ def main():
     print(f"Offset for {dt_str} at ({lat}, {lon}): {offset} ({tz_name})")  # pragma: no cover
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()
