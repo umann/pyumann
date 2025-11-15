@@ -5,6 +5,8 @@ import pytest
 from umann.metadata.chk_tz import TzMismatchError
 from umann.metadata.et import check_timezone_consistency
 
+pytestmark = pytest.mark.unit
+
 
 def test_chk_tz_happy_path_budapest_summer():
     md = {

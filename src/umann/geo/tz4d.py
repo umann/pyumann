@@ -5,6 +5,7 @@ Shapely polygons and R-tree spatial indexing. Includes auto-download
 and pickle caching for optimal performance.
 """
 
+import datetime as dt
 import io
 import json
 import pickle
@@ -12,7 +13,6 @@ import re
 import sys
 import urllib.request
 import zipfile
-from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -431,12 +431,12 @@ def local_time_from_timestamp(lat: float, lon: float, ts: float):
     tz_name = tz_from_coords(lat, lon)
     if not tz_name:
         return None, None, None
-    dt_utc = datetime.fromtimestamp(ts, tz=timezone.utc)
+    dt_utc = dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
     dt_local = dt_utc.astimezone(ZoneInfo(tz_name))
     return tz_name, dt_local.utcoffset(), dt_local
 
 
-def tz_offset_from_tz_unaware_dt(lat: float, lon: float, dt_naive: datetime) -> str | None:
+def tz_offset_from_tz_unaware_dt(lat: float, lon: float, dt_naive: dt.datetime) -> str | None:
     """Compute UTC offset for a naive local datetime at given coordinates.
 
     Rules:
@@ -466,8 +466,8 @@ def tz_offset_from_tz_unaware_dt(lat: float, lon: float, dt_naive: datetime) -> 
     # Heuristic: if offsets differ within a +/- 2 hour window, we are near a
     # transition. Prefer the offset just after the local time by sampling +1h.
     off_here = dt_fold0.utcoffset()
-    plus = (dt_naive + timedelta(hours=1)).replace(tzinfo=tz).utcoffset()
-    minus = (dt_naive - timedelta(hours=1)).replace(tzinfo=tz).utcoffset()
+    plus = (dt_naive + dt.timedelta(hours=1)).replace(tzinfo=tz).utcoffset()
+    minus = (dt_naive - dt.timedelta(hours=1)).replace(tzinfo=tz).utcoffset()
     if plus != minus and plus is not None and minus is not None:
         # Prefer the "new" tz after the jump (post-transition offset)
         # For a spring-forward gap, this corresponds to `plus`.
@@ -477,12 +477,12 @@ def tz_offset_from_tz_unaware_dt(lat: float, lon: float, dt_naive: datetime) -> 
     return off_here
 
 
-def parse_iso(ts: str) -> datetime:
+def parse_iso(ts: str) -> dt.datetime:
     """Parse ISO 8601 datetime string, handling trailing 'Z' for UTC."""
     # Handle trailing 'Z' (Zulu → UTC)
     if ts.endswith("Z"):
         ts = ts[:-1] + "+00:00"
-    return datetime.fromisoformat(ts)
+    return dt.datetime.fromisoformat(ts)
 
 
 def main():

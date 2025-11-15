@@ -7,10 +7,13 @@ the tests from actual ExifTool operations and file system interactions.
 import unittest
 from unittest.mock import patch
 
+import pytest
 from munch import munchify
 
 from umann.metadata import et
 from umann.utils.fs_utils import project_root
+
+pytestmark = pytest.mark.unit
 
 
 class TestEt(unittest.TestCase):
@@ -29,7 +32,7 @@ class TestEt(unittest.TestCase):
     def test_default_config(self):
         """Test default configuration values."""
         config = et.default()
-        self.assertEqual(config["common_args"], ["-struct", "-G0"])
+        self.assertEqual(config["common_args"], ["-struct", "-G1"])
         self.assertEqual(config["config_file"], project_root(".ExifTool_config"))
 
     def test_get_metadata_single(self):
@@ -99,40 +102,42 @@ class TestEt(unittest.TestCase):
         self.mock_exiftool.set_tags.assert_called_once_with(test_files, tags)
 
     def test_cli_main(self):
-        """Test CLI interface main function."""
-        test_cases = [
-            # Test metadata retrieval for single file
-            (["test.jpg"], {"EXIF:Make": "TestCamera"}),
-            # Test metadata retrieval with dictify flag
-            (["--dictify", "test.jpg"], {"test.jpg": {"EXIF:Make": "TestCamera"}}),
-            # Test metadata setting
-            (["--set", '{"IPTC:Keywords": "tag1, tag2"}', "test.jpg"], None),
-        ]
+        """Test CLI interface with subcommands."""
+        # Test get command
+        self.mock_exiftool.get_metadata.return_value = [{"EXIF:Make": "TestCamera"}]
 
-        for args, expected_output in test_cases:
-            with self.subTest(args=args, expected=expected_output):
-                if "--set" in args:
-                    self.mock_exiftool.set_tags.return_value = None
-                else:
-                    self.mock_exiftool.get_metadata.return_value = [{"EXIF:Make": "TestCamera"}]
+        with patch("sys.argv", ["et", "get", "test.jpg"]):
+            with patch("builtins.print") as mock_print:
+                try:
+                    et.main()
+                except SystemExit:
+                    pass
+                mock_print.assert_called_once()
+                printed_output = mock_print.call_args[0][0]
+                self.assertIn("EXIF:Make: TestCamera", printed_output)
 
-                with patch("sys.argv", ["et"] + args):
-                    if expected_output is None:
-                        try:
-                            et.main()  # For set operations
-                        except SystemExit:
-                            pass  # Click commands exit with sys.exit()
-                        self.mock_exiftool.set_tags.assert_called_once()
-                    else:
-                        with patch("builtins.print") as mock_print:
-                            try:
-                                et.main()
-                            except SystemExit:
-                                pass  # Click commands exit with sys.exit()
-                            # Verify YAML output format
-                            mock_print.assert_called_once()
-                            printed_output = mock_print.call_args[0][0]
-                            self.assertIn("EXIF:Make: TestCamera", printed_output)
+        # Test get with --dictify
+        self.mock_exiftool.get_metadata.return_value = [{"EXIF:Make": "TestCamera"}]
+
+        with patch("sys.argv", ["et", "get", "--dictify", "test.jpg"]):
+            with patch("builtins.print") as mock_print:
+                try:
+                    et.main()
+                except SystemExit:
+                    pass
+                mock_print.assert_called_once()
+                printed_output = mock_print.call_args[0][0]
+                self.assertIn("test.jpg", printed_output)
+
+        # Test set command
+        self.mock_exiftool.set_tags.return_value = None
+
+        with patch("sys.argv", ["et", "set", "--tags", '{"IPTC:Keywords": "tag1, tag2"}', "test.jpg"]):
+            try:
+                et.main()
+            except SystemExit:
+                pass
+            self.mock_exiftool.set_tags.assert_called()
 
     def test_transform_metadata(self):
         """Test transform_metadata function."""

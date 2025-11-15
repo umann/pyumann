@@ -6,7 +6,11 @@ when a neighboring zone within the given tolerance matches.
 
 from __future__ import annotations
 
+import pytest
+
 from umann.metadata.chk_tz import check_timezone_consistency
+
+pytestmark = pytest.mark.integration
 
 
 def test_declared_offset_accepted_near_border_with_tolerance():

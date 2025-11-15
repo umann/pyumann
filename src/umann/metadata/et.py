@@ -7,6 +7,7 @@ metadata in image files. It includes both command-line and programmatic interfac
 import copy
 import glob
 import re
+import sys
 import typing as t
 from contextlib import suppress
 from functools import lru_cache
@@ -17,12 +18,15 @@ import exiftool
 import yaml
 from munch import Munch, munchify
 
+from umann.config import get_config
 from umann.metadata import chk_tz as _chk_tz
+from umann.metadata.chk_datetime import check_datetime_consistency
 from umann.metadata.chk_tz import NoCaptureDateTimeError, NoGpsError, TzMismatchError
 from umann.utils.data_utils import get_multi, pop_multi, set_multi
 from umann.utils.fs_utils import project_root
 
 TYPE_NAME_TO_CLASS = {"int": int, "float": float}
+EXIFTOOL_GROUP = get_config("exiftool.group", "G1")
 
 
 @lru_cache
@@ -33,7 +37,7 @@ def default() -> dict[str, t.Any]:
         Default configuration dictionary with common arguments and config file path.
         The configuration is cached for performance.
     """
-    return {"common_args": ["-struct", "-G0"], "config_file": project_root(".ExifTool_config")}
+    return {"common_args": ["-struct", f"-{EXIFTOOL_GROUP}"], "config_file": project_root(".ExifTool_config")}
 
 
 def helper(**kwargs) -> exiftool.ExifToolHelper:
@@ -164,11 +168,21 @@ def read_metadata_yaml() -> Munch:
         return munchify(yaml.safe_load(infh))
 
 
-def get_metadata_multi(fnames: t.Iterable[str], /, **kwargs) -> dict[str, dict[str, t.Any]]:
+def get_metadata_multi(fnames: t.Iterable[str], /, one_by_one: bool = False, **kwargs) -> dict[str, dict[str, t.Any]]:
     """Get metadata for multiple files."""
-    fnames = list(fnames)  # not to consume it if iterator/generator
+
     with helper() as extl:
-        return dict(zip(fnames, [transform_metadata(md, **kwargs) for md in extl.get_metadata(fnames)]))
+        if one_by_one:
+            ret = {}
+            for fname in fnames:
+                # print(fname)
+                ret[fname] = transform_metadata(extl.get_metadata(fname)[0], **kwargs)
+        fnames = list(fnames)  # not to consume it if iterator/generator
+        transformed = []
+        for md in extl.get_metadata(fnames):
+            transformed.append(transform_metadata(md, **kwargs))
+        return dict(zip(fnames, transformed))
+        # return dict(zip(fnames, [transform_metadata(md, **kwargs) for md in extl.get_metadata(fnames)]))
 
 
 def get_metadata(fname: str, /, **kwargs) -> dict[str, t.Any]:
@@ -195,64 +209,155 @@ def check_timezone_consistency(metadata: dict[str, t.Any], /, tolerance_in_meter
         raise TzMismatchError(str(exc)) from exc
 
 
-@click.command()
+@click.group()
+def cli():
+    """ExifTool metadata operations CLI.
+
+    Get metadata: et image.jpg  (or: et get image.jpg)
+    Set metadata: et set --tags '{"Key": "value"}' image.jpg
+    Check timezone: et chk image.jpg
+    """
+
+
+@cli.command(name="get")
 @click.option("--dictify", "-d", is_flag=True, help="Use dict[fname, metadata] output format even if 1 fname is given")
-@click.option("--set", "tags_yaml", help="YAML or JSON format string of tags to set")
-@click.option("--chk-tz", is_flag=True, help="Check if timezone tags are consistent with GPS coordinates")
+@click.option(
+    "--transform",
+    "-t",
+    "transformations",
+    multiple=True,
+    type=click.Choice(list(TRANSFORMATORS) + ["ALL"]),
+    help="Apply transformations on data [Multiple]",
+)
+@click.argument("fnames", nargs=-1, required=True)
+def get_command(**kwargs):
+    """Get metadata from image files (default command).
+
+    Examples:
+        et get image.jpg
+        et get *.jpg --transform cool_out
+        et get image.jpg --dictify
+    """
+    cliopt = Munch(kwargs)
+
+    # Expand globs, but preserve raw values when no filesystem match (useful in tests/mocks)
+    expanded_fnames: list[str] = []
+    for wildcard in cliopt.fnames:
+        matches = glob.glob(wildcard)
+        expanded_fnames.extend(matches if matches else [wildcard])
+
+    if "ALL" in cliopt.transformations:
+        cliopt.transformations = tuple(TRANSFORMATORS.keys())
+    tr_kwargs = dict(transformations=cliopt.transformations)
+    multi = len(expanded_fnames) != 1 or cliopt.dictify
+
+    # Fetch metadata
+    metadata_map = get_metadata_multi(expanded_fnames, **tr_kwargs)
+
+    # Print metadata
+    output_obj = metadata_map if multi else next(iter(metadata_map.values()))
+    print(yaml.safe_dump(output_obj, sort_keys=False, allow_unicode=True).strip())
+
+
+@cli.command(name="set")
+@click.option(
+    "--tags",
+    "tags_yaml",
+    required=True,
+    help='YAML or JSON string of tags to set (e.g., \'{"IPTC:Keywords": "tag1, tag2"}\')',
+)
 @click.option(
     "--transform",
     "transformations",
     multiple=True,
     type=click.Choice(list(TRANSFORMATORS) + ["ALL"]),
-    help="Do transformations on data  [Multiple]",
+    help="Apply input transformations on tags [Multiple]",
 )
 @click.argument("fnames", nargs=-1, required=True)
-def main(**kwargs):
-    """Command-line interface for ExifTool metadata operations.
+def set_command(fnames, tags_yaml, transformations):
+    """Set metadata tags in image files.
 
-    This function provides a command-line interface for reading and writing
-    metadata using ExifTool. It supports both single and multiple file operations,
-    and can output metadata in YAML format or set metadata from YAML/JSON input.
+    Examples:
+        et set --tags '{"IPTC:Keywords": "tag1, tag2"}' image.jpg
+        et set --tags '{"XMP:Subject": "test"}' *.jpg --transform cool_in
     """
-    # Expand globs, but preserve raw values when no filesystem match (useful in tests/mocks)
-    fnames: list[str] = []
-    for wildcard in kwargs.pop("fnames"):
+    # Expand globs
+    expanded_fnames: list[str] = []
+    for wildcard in fnames:
         matches = glob.glob(wildcard)
-        fnames.extend(matches if matches else [wildcard])
-    transformations = kwargs.get("transformations", ())
+        expanded_fnames.extend(matches if matches else [wildcard])
+
     if "ALL" in transformations:
         transformations = tuple(TRANSFORMATORS.keys())
     tr_kwargs = dict(transformations=transformations)
-    multi = len(fnames) != 1 or kwargs.get("dictify", False)
-    if tags_yaml := kwargs.pop("tags_yaml"):
-        tags = yaml.safe_load(tags_yaml)
-        set_metadata(fnames, tags, **tr_kwargs)
-    else:
-        # Fetch metadata (always build a mapping for a consistent flow)
-        metadata_map = get_metadata_multi(fnames, **tr_kwargs)
 
-        if kwargs.get("chk_tz", False):
-            chk_tz_errors(metadata_map)
-
-        # Default: print metadata
-        output_obj = metadata_map if multi else next(iter(metadata_map.values()))
-        print(yaml.safe_dump(output_obj, sort_keys=False, allow_unicode=True).strip())
-        # """perform checks and raise on issues"""
+    tags = yaml.safe_load(tags_yaml)
+    set_metadata(expanded_fnames, tags, **tr_kwargs)
+    click.echo(f"Metadata updated for {len(expanded_fnames)} file(s).")
 
 
-def chk_tz_errors(metadata_map: dict[str, dict[str, t.Any]]):  # pragma: no cover
-    """Check timezone consistency for multiple files and raise ClickException on errors."""
-    errors = []
+@cli.command(name="chk")
+@click.option(
+    "--tolerance_meters",
+    "-m",
+    type=int,
+    default=200,
+    help="Border tolerance in meters for timezone checks (default: 200)",
+)
+@click.option("--geotz", is_flag=True, help="Check Location & DateTime vs. Time Zone")
+@click.option("--dt", is_flag=True, help="Check Date, Time and Ofsset fileds consistency")
+@click.argument("fnames", nargs=-1, required=True)
+def chk_command(**kwargs):
+    """Check consistency in image metadata.
+
+    Verifies that timezone offset tags match the GPS coordinates and capture datetime.
+
+    Examples:
+        et chk image.jpg
+        et chk *.jpg --tolerance 500
+    """
+    cliopt = Munch(kwargs)
+
+    # Expand globs
+    expanded_fnames: list[str] = []
+    for wildcard in cliopt.fnames:
+        matches = glob.glob(wildcard)
+        expanded_fnames.extend(i for i in (matches if matches else [wildcard]) if i.endswith(".jpg"))
+
+    metadata_map = get_metadata_multi(expanded_fnames)
+
+    all_checks = ["geotz", "dt"]
+    if not any(getattr(cliopt, check) for check in all_checks):
+        cliopt.update({check: True for check in all_checks})
+
+    exit_code = 0
     for fname, md in metadata_map.items():
-        try:
-            _chk_tz.check_timezone_consistency(md)
-        except TzMismatchError as e:
-            errors.append(f"{fname}: {e}")
-        except (NoCaptureDateTimeError, NoGpsError):
-            continue
-    if errors:
-        raise click.ClickException("\n".join(["Timezone consistency check failed:"] + errors))
-    # Success: no output required
+        errors_dict = {}
+        if cliopt.dt:
+            errors_dict.update(check_datetime_consistency(md))
+        if cliopt.geotz and not errors_dict:
+            try:
+                _chk_tz.check_timezone_consistency(md, tolerance_in_meters=cliopt.tolerance_meters)
+            except (NoCaptureDateTimeError, NoGpsError):
+                pass
+            except TzMismatchError as e:
+                errors_dict.update({"TzMismatchError": str(e)})
+        if errors_dict:
+            exit_code = 1
+            print(yaml.safe_dump({fname: errors_dict}, sort_keys=False, allow_unicode=True).strip())
+    if exit_code != 0:
+        sys.exit(exit_code)
+
+
+def main():
+    """Entry point that adds default 'get' subcommand if needed.
+
+    This allows: et image.jpg  (instead of requiring: et get image.jpg)
+    """
+    # If first arg exists and is not a known subcommand or option, prepend 'get'
+    if sys.argv[1:] and not re.search(r"^(get|set|chk|-h|--help)$", sys.argv[1]):
+        sys.argv.insert(1, "get")
+    cli()
 
 
 # entry point `et` is defined in pyproject.toml

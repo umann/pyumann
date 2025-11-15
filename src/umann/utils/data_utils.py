@@ -4,6 +4,7 @@ This module provides basic utility functions that are used across the project,
 particularly for handling dicts.
 """
 
+import typing as t
 from collections.abc import Iterable
 
 
@@ -80,7 +81,6 @@ def pop_multi(
     Note:
         Empty intermediate dictionaries are automatically removed after popping.
     """
-    print(f"{path=} {default=} {pop_list_items=} {val_to_del=} {data=}")
 
     def pop(dat, key):
         try:
@@ -128,3 +128,48 @@ def listify(data):
     if isinstance(data, Iterable) and not isinstance(data, (str, bytes)):
         return list(data)
     return [data]
+
+
+T = t.TypeVar("T")
+
+
+def recurse(data: T, func: t.Callable[[t.Any], t.Any], what: t.Iterable[str] = ("value",)) -> T:
+    """Recursively transform data elements
+
+    :param T data: any serializable input data
+    :param t.Callable[[t.Any], t.Any] func: to transform data elements with
+    :param tuple what: Possible items are "value" and "key"
+    :return T: transformed new data instance
+    >>> recurse({1:2, 3:4}, str, ('key',))
+    {'1': 2, '3': 4}
+    >>> recurse({1:2, 3:4}, str)
+    {1: '2', 3: '4'}
+    >>> recurse({1:2, 3:4}, str, 'key')
+    {'1': 2, '3': 4}
+    >>> recurse({1:2, 3:4}, str, ('key', 'val'))
+    Traceback (most recent call last):
+    ...
+    AssertionError: {'val', 'key'}
+    >>> recurse({1:2, 3:4}, str, ('key', 'value'))
+    {'1': '2', '3': '4'}
+    >>> recurse([1, 2, {3}], lambda x: x * 10)
+    [10, 20, {30}]
+    """
+    what = set(listify(what))
+    assert what and not what - {"key", "value"}, what
+
+    def _recurse(data: T, func: t.Callable[[t.Any], t.Any], what: set[str]) -> T:
+        def apply(val, is_key: bool = False):
+            if is_key and "key" in what:
+                return func(val)
+            if not is_key and "value" in what:
+                return _recurse(val, func, what)
+            return val
+
+        if isinstance(data, dict):
+            return type(data)({apply(k, is_key=True): apply(v) for k, v in data.items()})
+        if isinstance(data, (list, tuple, set)):
+            return type(data)(apply(item) for item in data)
+        return func(data) if "value" in what else data
+
+    return _recurse(data, func, what)

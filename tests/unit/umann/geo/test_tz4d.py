@@ -16,6 +16,8 @@ from umann.geo.tz4d import (
     tz_offset_from_tz_unaware_dt,
 )
 
+pytestmark = pytest.mark.unit
+
 PARIS = (48.8566, 2.3522)  # Europe/Paris
 NEW_YORK = (40.7128, -74.0060)  # America/New_York
 BUDAPEST = (47.4979, 19.0402)  # Europe/Budapest

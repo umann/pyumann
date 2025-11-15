@@ -40,6 +40,8 @@ install:
 test:
 	@echo "Running pre-commit checks..."
 	pre-commit run --all-files
+	@echo "\nChecking for dead code..."
+	vulture
 	@echo "\nRunning all tests with coverage..."
 	python -m pytest tests/ --cov=umann --cov-report=term-missing --cov-report=xml:coverage.xml
 	@echo "\nChecking coverage against baseline..."

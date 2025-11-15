@@ -1,10 +1,10 @@
 """Timezone consistency check helpers for ExifTool metadata."""
 
+import datetime as dt
 import math
 import re
 import typing as t
 from contextlib import suppress
-from datetime import datetime, timedelta
 
 from umann.geo.tz4d import tz_from_coords, tz_offset_from_tz_unaware_dt
 
@@ -25,7 +25,7 @@ class NoGpsError(MetadataError):
     """Exception raised for missing GPS coordinates in metadata."""
 
 
-def _parse_exif_datetime(dt_str: str) -> datetime:
+def _parse_exif_datetime(dt_str: str) -> dt.datetime:
     """Parse EXIF-style 'YYYY:MM:DD HH:MM:SS' into a naive datetime.
 
     Falls back to datetime.fromisoformat for ISO-like strings.
@@ -34,17 +34,17 @@ def _parse_exif_datetime(dt_str: str) -> datetime:
     # Common EXIF format
     match = re.match(r"^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})$", dt_str)
     if match:
-        return datetime(*map(int, match.groups()))
+        return dt.datetime(*map(int, match.groups()))
     # Try ISO
     with suppress(Exception):
         # Handle trailing Z
         if dt_str.endswith("Z"):
             dt_str = dt_str[:-1] + "+00:00"
-        return datetime.fromisoformat(dt_str).replace(tzinfo=None)
+        return dt.datetime.fromisoformat(dt_str).replace(tzinfo=None)
     raise TzMismatchError(f"Unrecognized datetime format: {dt_str!r}")
 
 
-def _format_offset_hhmm(td: t.Optional[timedelta]) -> str:
+def _format_offset_hhmm(td: dt.timedelta | None) -> str:
     """Format a timedelta offset to +HH:MM/-HH:MM string."""
     if td is None:
         raise TzMismatchError("No timezone offset available")
@@ -150,7 +150,7 @@ def _extract_offset(md: dict[str, t.Any]) -> str:
     raise TzMismatchError(f"Missing timezone offset tag(s): {', '.join([key0] + keys)}")
 
 
-def _extract_naive_local_datetime(md: dict[str, t.Any]) -> datetime:
+def _extract_naive_local_datetime(md: dict[str, t.Any]) -> dt.datetime:
     """Extract a representative local datetime to check offset against."""
     for key in (
         "EXIF:DateTimeOriginal",
