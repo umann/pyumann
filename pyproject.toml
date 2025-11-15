@@ -31,6 +31,7 @@ dev = [
   "pre-commit",
   "munch",
   "parameterized",
+  "vulture",
 ]
 
 [project.scripts]
@@ -103,4 +104,14 @@ markers = [
   "system: end-to-end flows",
   "regression: guards previously broken or specified behaviors",
 ]
-addopts = "-ra"
+addopts = "-ra --doctest-modules"
+doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
+
+
+[tool.vulture]
+ignore_names = ["*_command", "pytestmark", "pytest_runtest_setup", "temp_workspace"]
+make_whitelist = true
+min_confidence = 0
+paths = ["src", "tests"]
+sort_by_size = true
+# verbose = true

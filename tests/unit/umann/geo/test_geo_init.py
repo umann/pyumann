@@ -6,6 +6,8 @@ import pytest
 
 from umann.geo import local_time_from_timestamp, tz_from_coords, tz_offset_from_tz_unaware_dt
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.unit
 def test_tz_from_coords_wrapper():
