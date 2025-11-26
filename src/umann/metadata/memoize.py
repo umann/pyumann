@@ -1,3 +1,5 @@
+"""Module to persistently memoize file metadata using an SQLite database."""
+
 import json
 import os
 import re
@@ -60,7 +62,7 @@ def get_cursor() -> t.Generator[sqlite3.Cursor, None, None]:
     cur = connection.cursor()
     try:
         yield cur
-    except Exception:
+    except sqlite3.Error:
         # Ensure we don't persist partial writes on error
         connection.rollback()
         raise
@@ -69,7 +71,7 @@ def get_cursor() -> t.Generator[sqlite3.Cursor, None, None]:
     finally:
         try:
             cur.close()
-        except Exception:
+        except sqlite3.Error:
             pass
 
 
@@ -85,7 +87,7 @@ AFTER INSERT ON {table}
 FOR EACH ROW
 BEGIN
 UPDATE {table} SET chk_ts = unixepoch('subsec') WHERE id = NEW.id;
-END;    
+END;
 
 CREATE TRIGGER IF NOT EXISTS {table}_after_update_chk_ts
 AFTER UPDATE ON {table}
@@ -234,7 +236,7 @@ CREATE TABLE IF NOT EXISTS content_metadata (
     `id`         INTEGER PRIMARY KEY NOT NULL,
     `cmd_id`     INTEGER NOT NULL REFERENCES `cmd` (`id`) ON DELETE RESTRICT,  -- e.g. "exiftool -G1 -struct"
     `content_id` INTEGER NOT NULL REFERENCES `content` (`id`) ON DELETE CASCADE,
-    `json`       TEXT NOT NULL,  -- all content-specific metadata, i.e. no FS-specific 
+    `json`       TEXT NOT NULL,  -- all content-specific metadata, i.e. no FS-specific
                                 -- (e.g System: for exiftool -G1) tags
     `chk_ts`     REAL NOT NULL DEFAULT (unixepoch()), -- unix timestamp of last check
     UNIQUE (`cmd_id`, `content_id`)
@@ -299,7 +301,7 @@ CREATE INDEX IF NOT EXISTS `exif-chk_ts` on exif (`chk_ts`);
 {trigger_on_chk_ts('file')}
 
 -- /* as seen in .picasa.ini */
--- CREATE TABLE IF NOT EXISTS `picasa` (  
+-- CREATE TABLE IF NOT EXISTS `picasa` (
 --     `id`      INTEGER PRIMARY KEY NOT NULL,
 --     `file_id` INTEGER NOT NULL REFERENCES `file` (`id`) ON DELETE CASCADE,
 --     `crop`    TEXT,
@@ -315,12 +317,12 @@ CREATE INDEX IF NOT EXISTS `exif-chk_ts` on exif (`chk_ts`);
 -- CREATE INDEX IF NOT EXISTS `picasa-crop` on picasa (`crop`);
 -- CREATE INDEX IF NOT EXISTS `picasa-faces` on picasa (`faces`);
 -- CREATE INDEX IF NOT EXISTS `picasa-filters` on picasa (`filters`);
--- CREATE INDEX IF NOT EXISTS `picasa-redo` on picasa (`redo`);        
+-- CREATE INDEX IF NOT EXISTS `picasa-redo` on picasa (`redo`);
 -- CREATE INDEX IF NOT EXISTS `picasa-rotate` on picasa (`rotate`);
--- CREATE INDEX IF NOT EXISTS `picasa-star` on picasa (`star`);    
+-- CREATE INDEX IF NOT EXISTS `picasa-star` on picasa (`star`);
 -- CREATE INDEX IF NOT EXISTS `picasa-chk_ts` on picasa (`chk_ts`);
 --
--- {trigger_on_chk_ts('file')}   
+-- {trigger_on_chk_ts('file')}
 
 -- This is also in table content_metadata.
 CREATE TABLE IF NOT EXISTS `keyword` (
@@ -370,7 +372,7 @@ CREATE TABLE IF NOT EXISTS `face` (
    )
 );
 
-INSERT OR IGNORE INTO vol (win, unx) 
+INSERT OR IGNORE INTO vol (win, unx)
     VALUES {', '.join(f'("{i}:", "/mnt/{i.lower()}")' for i in string.ascii_uppercase)};
 """
 
@@ -401,6 +403,7 @@ def flat_more(data) -> str | None:
     return data
 
 
+# pylint: disable=too-many-arguments
 def get_file_rec(
     fname: str,
     /,
@@ -411,8 +414,18 @@ def get_file_rec(
     strict: bool = False,
     on_nonexistent: t.Any = FileNotFoundError,
 ) -> Munch:
-    """returning Munch surely has .file_id and .metadata, latter might be None
-    With stat, a 2nd call to os.stat can be saved if provided by caller"""
+    """Get or create file record in memoization database.
+
+    :param str fname: _description_
+    :param _type_ func: _description_, defaults to lambdaf:{}
+    :param str cmd: _description_, defaults to ""
+    :param _type_ fstat: _description_, defaults to None
+    :param bool strict: _description_, defaults to False
+    :param t.Any on_nonexistent: _description_, defaults to FileNotFoundError
+    :raises NotARegularFileError: _description_
+    :raises on_nonexistent: _description_
+    :return Munch: _description_
+    """
 
     @lru_cache()
     def _md5_file(fname: str) -> str:
@@ -436,10 +449,7 @@ def get_file_rec(
                 metadata = {}
                 for key in ["file_metadata_json", "content_metadata_json"]:
                     metadata.update(json.loads(res.get(key) or "{}"))
-                return Munch(
-                    file_id=res.file_id,
-                    metadata=metadata or None,
-                )
+                return metadata
         else:
             res = DefaultMunch()
 
@@ -458,8 +468,7 @@ def get_file_rec(
         if size is None:
             if isinstance(on_nonexistent, Exception):
                 raise on_nonexistent(f"File not found: {res.fname}")
-            else:
-                return on_nonexistent
+            return on_nonexistent
 
         res.content_id = res.content_id or get_id(
             cursor, "content", uniq=dict(md5=_md5_file(res.fname)), add=dict(size=size, md5_soul=None)
@@ -496,6 +505,7 @@ def _handle_metadata(cursor: sqlite3.Cursor, res: Munch) -> Munch | None:
     _handle_content_metadata(cursor, res)
     _handle_file_metadata(cursor, res)
     return metadata or None
+
 
 def _handle_content_metadata(cursor: sqlite3.Cursor, res: Munch) -> None:
     has_kw = has_face = res.ext in get_config("picasa.exts", {})
@@ -607,9 +617,9 @@ file_metadata.id as file_metadata_id,
 content_metadata.json as content_metadata_json,
 content_metadata.id as content_metadata_id"""
         join_metadata = """\
-LEFT JOIN file_metadata    ON 
+LEFT JOIN file_metadata    ON
     file_metadata.file_id = file.id AND file_metadata.cmd_id = :cmd_id
-LEFT JOIN content_metadata ON 
+LEFT JOIN content_metadata ON
     content_metadata.content_id = content.id AND content_metadata.cmd_id = :cmd_id"""
     else:
         select_metadata = ""
@@ -638,10 +648,10 @@ FROM file
     JOIN ext          ON ext.id = file.ext_id
     LEFT JOIN content ON content.id = file.content_id
 {join_metadata}
-WHERE 
-    vol.`{vol_type()}` = :vol 
-    AND dir.dir = :dir 
-    AND bas.bas = :bas 
+WHERE
+    vol.`{vol_type()}` = :vol
+    AND dir.dir = :dir
+    AND bas.bas = :bas
     AND ext.ext = :ext""",
         parameters,
     )
@@ -727,7 +737,7 @@ def get_id(
     pk_ = "id"
     if res := select1(cursor, table, [pk_, *add.keys()], uniq):
         id_ = res.pop(pk_)
-        if whether_chg := (res != add):
+        if whether_chg := res != add:
             update1(cursor, table, add, uniq)
     else:
         id_ = insert1(cursor, table, {**uniq, **add})
@@ -806,7 +816,10 @@ def insert(cursor: sqlite3.Cursor, table: str, add: list[dict], ignore: bool = F
     command = "INSERT OR IGNORE" if ignore else "INSERT"
     if debug:
         print(command, add, file=sys.stderr)
-    sql = f"{command} INTO {backtick(table)} ({backtick(add[0].keys())}) values {', '.join(['(' + ', '.join(['?'] * len(add[0])) + ')'] * len(add))}"
+    sql = (
+        f"{command} INTO {backtick(table)} ({backtick(add[0].keys())})"
+        + f" values {', '.join(['(' + ', '.join(['?'] * len(add[0])) + ')'] * len(add))}"
+    )
     execute(cursor, sql, values)
     return cursor.lastrowid
 
@@ -814,7 +827,7 @@ def insert(cursor: sqlite3.Cursor, table: str, add: list[dict], ignore: bool = F
 def execute(cursor: sqlite3.Cursor, sql: str, parameters: tuple | dict = ()):
     try:
         return cursor.execute(sql, parameters)
-    except Exception as e:
+    except sqlite3.Error as e:
         # Show SQL with parameters substituted for easier debugging
         try:
             if isinstance(parameters, dict):
@@ -827,11 +840,12 @@ def execute(cursor: sqlite3.Cursor, sql: str, parameters: tuple | dict = ()):
                 sql_with_params = sql
                 for value in parameters:
                     sql_with_params = sql_with_params.replace("?", repr(value), 1)
-        except Exception:
+        except TypeError as e2:
             # Fallback if substitution fails
             sql_with_params = f"{sql}\n-- Parameters: {parameters}"
+            raise sqlite3.Warning(f"{e!r}\n>>>\n{sql_with_params.strip()}\n<<<") from e2
 
-        raise Exception(f"{e!r}\n>>>\n{sql_with_params.strip()}\n<<<") from e
+        raise sqlite3.Warning(f"{e!r}\n>>>\n{sql_with_params.strip()}\n<<<") from e
 
 
 def backtick(columns) -> str:

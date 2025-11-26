@@ -1,2 +1,16 @@
 exiftool:
   group: G1
+memoize:
+  db:
+    path: /mnt/c/usr/local/cache/md.sqlite
+metadata:
+  exts: ['.jpg', '.jpeg', '.png', '.avi', '.mp4', '.mov', '.mp3']
+  soul:
+    exts: ['.jpg', '.jpeg', '.png', '.avi', '.mp3']
+picasa:
+  exts: ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.avi', '.mp4', '.mov']
+  dirs:
+    - /mnt/f/photos
+    - /mnt/f/scan
+    - /mnt/f/videos
+  namespace: http://umann.hu/kornel/picasa/1.0/

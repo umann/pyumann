@@ -15,6 +15,7 @@ requires-python = ">=3.11"
 dependencies = [
   "PyYAML",
   "click",
+  "deepmerge",
   "munch",
   "pyexiftool",
   "shapely",
@@ -32,6 +33,7 @@ dev = [
   "munch",
   "parameterized",
   "vulture",
+  "docstring-parser",
 ]
 
 [project.scripts]
@@ -76,6 +78,7 @@ disable = [
 #     "unnecessary-ellipsis",
 #     "use-symbolic-message-instead",
      "use-dict-literal",
+     "fixme",
 #     "useless-suppression",
 #     "wrong-import-order",
 ]
@@ -109,7 +112,7 @@ doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 
 
 [tool.vulture]
-ignore_names = ["*_command", "pytestmark", "pytest_runtest_setup", "temp_workspace"]
+ignore_names = ["cli_command_*", "pytestmark", "pytest_runtest_setup", "temp_workspace"]
 make_whitelist = true
 min_confidence = 0
 paths = ["src", "tests"]

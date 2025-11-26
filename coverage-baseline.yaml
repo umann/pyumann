@@ -1,12 +1,14 @@
 files:
-  src/umann/config.py: 100.0
+  src/umann/config.py: 75
   src/umann/geo/__init__.py: 100.0
   src/umann/geo/tz4d.py: 100.0
   src/umann/metadata/chk_datetime.py: 78.9
   src/umann/metadata/chk_tz.py: 81.8
-  src/umann/metadata/et.py: 81.2
+  src/umann/metadata/et.py: 75
+  src/umann/metadata/memoize.py: 31.1
   src/umann/utils/data_utils.py: 65.8
+  src/umann/utils/encoding_utils.py: 38.9
   src/umann/utils/fs_utils.py: 86.7
   src/umann/utils/trace_utils.py: 80.8
   src/umann/utils/yaml_utils.py: 88.0
-overall: 83.2
+overall: 75

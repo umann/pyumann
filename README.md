@@ -94,6 +94,40 @@ metadata_dict = et.get_metadata_multi(['image1.jpg', 'image2.jpg'])
 et.set_tags('image.jpg', {'IPTC:Keywords': ['tag1', 'tag2']})
 ```
 
+## Configuration
+
+pyumann loads its configuration from YAML, with a simple base+override scheme.
+
+- Base config: taken from the file specified by environment variable `PYUMANN_CONFIG`; if unset, defaults to the repository/root `config.yaml`.
+- Override config (optional): if environment variable `PYUMANN_CONFIG_OVERRIDE` is set, that file is loaded and shallow-merged on top of the base config. Otherwise, if `~/.pyumann_config_override.yaml` exists, it is merged on top of the base config.
+
+APIs:
+- `umann.config.load_config()` returns the merged configuration as a dict and is cached via `functools.lru_cache`.
+- `umann.config.get_config(path: str | None = None, default: Any | None = None)` retrieves a value by dot-separated path (e.g., `"section.sub.key"`), or returns the full config when `path` is omitted.
+
+Examples:
+
+```python
+from umann.config import load_config, get_config
+
+cfg = load_config()
+db_url = get_config("database.url", default="sqlite:///data.db")
+
+# If you need to reload after changing env vars or files:
+load_config.cache_clear()
+cfg = load_config()
+```
+
+Environment variables:
+- `PYUMANN_CONFIG` — absolute or relative path to the base YAML file
+- `PYUMANN_CONFIG_OVERRIDE` — path to an optional override YAML file
+
+User override file (if env var not set):
+- `~/.pyumann_config_override.yaml` — merged on top of base when present
+
+Merging behavior:
+- Dictionaries are deep-merged; other values are overridden by the override file.
+
 ## Development
 
 ### Testing

@@ -7,6 +7,8 @@ from collections import defaultdict
 import yaml
 from munch import Munch
 
+from umann.utils.data_utils import NotSpecified
+
 
 def stringify_datetime(data: dt.datetime, exif_compatible: bool = False) -> str:
     """Represent datetime as ISO format with space separator instead of 'T', suppressing trailing zeros."""
@@ -123,10 +125,12 @@ def yaml_dump_cozy(data, stream=None, exif_compatible=False, **kwargs) -> str:
     return yaml.dump(data, stream, Dumper=DateTimeDumper, **kwargs)
 
 
-def yaml_safe_load_file(fname: str) -> t.Any:
+def yaml_safe_load_file(fname: str, default=NotSpecified) -> t.Any:
     """Load YAML content from a file handle safely."""
     try:
         with open(fname, "r", encoding="utf-8") as fh:
             return yaml.safe_load(fh)
-    except Exception as e:
-        raise RuntimeError(f"Failed to load YAML file '{fname}': {e}") from e
+    except FileNotFoundError as e:
+        if default is NotSpecified:
+            raise RuntimeError(f"Failed to load YAML file '{fname}': {e}") from e
+        return default

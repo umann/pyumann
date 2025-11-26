@@ -7,6 +7,7 @@ metadata in image files. It includes both command-line and programmatic interfac
 import copy
 import glob
 import re
+import shlex
 import sys
 import typing as t
 from contextlib import suppress
@@ -22,11 +23,14 @@ from umann.config import get_config
 from umann.metadata import chk_tz as _chk_tz
 from umann.metadata.chk_datetime import check_datetime_consistency
 from umann.metadata.chk_tz import NoCaptureDateTimeError, NoGpsError, TzMismatchError
+from umann.metadata.memoize import get_file_rec
 from umann.utils.data_utils import get_multi, pop_multi, set_multi
+from umann.utils.encoding_utils import fix_str_encoding
 from umann.utils.fs_utils import project_root
 
 TYPE_NAME_TO_CLASS = {"int": int, "float": float}
 EXIFTOOL_GROUP = get_config("exiftool.group", "G1")
+EXIFTOOL_ARGS = ["-struct", f"-{EXIFTOOL_GROUP}"]
 
 
 @lru_cache
@@ -37,7 +41,7 @@ def default() -> dict[str, t.Any]:
         Default configuration dictionary with common arguments and config file path.
         The configuration is cached for performance.
     """
-    return {"common_args": ["-struct", f"-{EXIFTOOL_GROUP}"], "config_file": project_root(".ExifTool_config")}
+    return {"common_args": EXIFTOOL_ARGS, "config_file": project_root(".ExifTool_config")}
 
 
 def helper(**kwargs) -> exiftool.ExifToolHelper:
@@ -74,6 +78,28 @@ def simple_out(metadata: dict[str, t.Any]) -> dict[str, t.Any]:
         pop_multi(metadata, path, default=None, pop_list_items=True, val_to_del=val_to_del)
 
     return metadata
+
+
+def fix_iptc_encoding(metadata: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Fix IPTC encoding issues in metadata dictionary.
+
+    Applies fix_iptc_encoding to all IPTC and MWG string fields.
+    """
+
+    if not isinstance(metadata, dict):
+        return metadata
+    metadata = copy.deepcopy(metadata)
+
+    def fix_recursive(obj: t.Any, key: str = "") -> t.Any:
+        if isinstance(obj, dict):
+            return type(obj)({k: fix_recursive(v, k) for k, v in obj.items()})
+        if isinstance(obj, list):
+            return type(obj)(fix_recursive(item, key) for item in obj)
+        if isinstance(obj, str) and (key.startswith("IPTC:") or key.startswith("MWG:")):
+            return type(obj)(fix_str_encoding(obj))
+        return obj
+
+    return fix_recursive(metadata)
 
 
 def check(metadata: dict[str, t.Any]) -> dict[str, t.Any]:
@@ -136,7 +162,13 @@ def cool_out(metadata: dict[str, t.Any]) -> dict[str, t.Any]:
     return metadata
 
 
-TRANSFORMATORS = dict(cool_in=cool_in, simple_out=simple_out, cool_out=cool_out, check=check)
+TRANSFORMATORS = dict(
+    cool_in=cool_in,
+    simple_out=simple_out,
+    cool_out=cool_out,
+    check=check,
+    fix_iptc_encoding=fix_iptc_encoding,
+)
 
 
 def transform_metadata(metadata: dict[str, t.Any], /, transformations: t.Iterable[str] = ()) -> dict[str, t.Any]:
@@ -168,15 +200,16 @@ def read_metadata_yaml() -> Munch:
         return munchify(yaml.safe_load(infh))
 
 
-def get_metadata_multi(fnames: t.Iterable[str], /, one_by_one: bool = False, **kwargs) -> dict[str, dict[str, t.Any]]:
+def get_metadata_multi(fnames: t.Iterable[str], /, one_by_one: bool = True, **kwargs) -> dict[str, dict[str, t.Any]]:
     """Get metadata for multiple files."""
 
+    if one_by_one:
+        ret = {}
+        for fname in fnames:
+            # print(fname)
+            ret[fname] = get_metadata(fname, **kwargs)
+        return ret
     with helper() as extl:
-        if one_by_one:
-            ret = {}
-            for fname in fnames:
-                # print(fname)
-                ret[fname] = transform_metadata(extl.get_metadata(fname)[0], **kwargs)
         fnames = list(fnames)  # not to consume it if iterator/generator
         transformed = []
         for md in extl.get_metadata(fnames):
@@ -187,8 +220,17 @@ def get_metadata_multi(fnames: t.Iterable[str], /, one_by_one: bool = False, **k
 
 def get_metadata(fname: str, /, **kwargs) -> dict[str, t.Any]:
     """Get metadata for one file."""
-    with helper() as extl:
-        return transform_metadata(extl.get_metadata(fname)[0], **kwargs)
+
+    def _get(fname):
+        with helper() as extl:
+            return transform_metadata(extl.get_metadata(fname)[0], **kwargs)
+
+    try:
+        md = get_file_rec(fname, func=_get, cmd=shlex.join(["exiftool", *EXIFTOOL_ARGS]))
+    except Exception as e:
+        print(f"Error getting metadata for {fname}: {e}", file=sys.stderr)
+        raise
+    return transform_metadata(md or {}, **kwargs)
 
 
 def set_metadata(fname_s: str | t.Iterable[str], tags, /, **kwargs):
@@ -229,8 +271,9 @@ def cli():
     type=click.Choice(list(TRANSFORMATORS) + ["ALL"]),
     help="Apply transformations on data [Multiple]",
 )
+@click.option("--fix-iptc-encoding/--no-fix-iptc-encoding", default=True, help="Fix IPTC encoding issues in metadata")
 @click.argument("fnames", nargs=-1, required=True)
-def get_command(**kwargs):
+def cli_command_get(**kwargs):
     """Get metadata from image files (default command).
 
     Examples:
@@ -248,6 +291,11 @@ def get_command(**kwargs):
 
     if "ALL" in cliopt.transformations:
         cliopt.transformations = tuple(TRANSFORMATORS.keys())
+    if kwargs.get("fix_iptc_encoding"):
+        if "fix_iptc_encoding" not in cliopt.transformations:
+            cliopt.transformations += ("fix_iptc_encoding",)
+    else:
+        cliopt.transformations = tuple(t for t in cliopt.transformations if t != "fix_iptc_encoding")
     tr_kwargs = dict(transformations=cliopt.transformations)
     multi = len(expanded_fnames) != 1 or cliopt.dictify
 
@@ -274,7 +322,7 @@ def get_command(**kwargs):
     help="Apply input transformations on tags [Multiple]",
 )
 @click.argument("fnames", nargs=-1, required=True)
-def set_command(fnames, tags_yaml, transformations):
+def cli_command_set(fnames, tags_yaml, transformations):
     """Set metadata tags in image files.
 
     Examples:
@@ -307,7 +355,7 @@ def set_command(fnames, tags_yaml, transformations):
 @click.option("--geotz", is_flag=True, help="Check Location & DateTime vs. Time Zone")
 @click.option("--dt", is_flag=True, help="Check Date, Time and Ofsset fileds consistency")
 @click.argument("fnames", nargs=-1, required=True)
-def chk_command(**kwargs):
+def cli_command_chk(**kwargs):
     """Check consistency in image metadata.
 
     Verifies that timezone offset tags match the GPS coordinates and capture datetime.

@@ -152,7 +152,7 @@ def main() -> int:
         if new_pct + 1e-9 < old_pct:
             errors.append(f"  {datapath}: {old_pct}% -> {new_pct}% ({new_pct - old_pct:.1f}%)")
     if errors:
-        print("\n".join(["Coverage decreased:"] + errors))
+        print("\n".join(["Coverage decreased:"] + errors + [f"See {BASELINE_YAML}"]))
         return 1
 
     # No regressions: check if baseline changed

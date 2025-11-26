@@ -15,11 +15,12 @@ $Image::ExifTool::MWG::strict=1;
     ListSep => q{; },
 );
 %Image::ExifTool::UserDefined = (
+    'Image::ExifTool::Composite' => {
+        # Your custom composite tags here (if any)
+    },
     'Image::ExifTool::File' => {
-     FileSize => {
-            Groups => { 1 => 'System' },
-            Notes => 'NO TO: print conversion uses historic prefixes: 1 kB = 1024 bytes, etc.',
-            PrintConv => sub { @_ },
+        FileSize => {
+            PrintConv => sub { $_[0] },  # Return raw value without conversion
         },
     },
 );
