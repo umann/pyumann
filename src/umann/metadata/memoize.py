@@ -14,14 +14,9 @@ from functools import lru_cache
 from munch import DefaultMunch, Munch
 
 from umann.config import get_config
-
-# from umann.metadata.picasa import is_file_for_picasa
+from umann.digest import extract_soul
 from umann.utils.data_utils import dict_only_keys, get_multi, split_dict
 from umann.utils.fs_utils import SLASHB, md5_file, urealpath, vol_type
-
-# from umann.metadata.md5_sum import md5_sum
-# from umann.metadata.soul import md5_soul
-# from umann.metadata.mp3_metadata import get_mp3_metadata
 
 
 class NotARegularFileError(OSError):
@@ -260,8 +255,8 @@ CREATE TABLE IF NOT EXISTS `exif` (
     `ImageWidth`           INTEGER NOT NULL,
     `ImageHeight`          INTEGER NOT NULL,
     `Orientation`          TEXT,
-    `Creator`              TEXT,
-    `Description`          TEXT,
+    `Creator`              TEXT,  -- Creator of photo/video, performer of audio
+    `Description`          TEXT,  -- Caption-Abstract of image or title of audio/video
     `Keywords`             TEXT,  -- comma-separated; same as in keyword, here for easy searching
     `Rating`               TEXT,
     `CountryCode`          TEXT,
@@ -273,11 +268,15 @@ CREATE TABLE IF NOT EXISTS `exif` (
     `GPSLatitude`          REAL,
     `GPSLongitude`         REAL,
     `GPSHPositioningError` REAL,
+    `type`             TEXT,  -- content-type like image/jpeg, video/x-msvideo, video/quicktime, video/mp4,
+                                 -- audio/mpeg
 --     `taken_ts`             INTEGER,  -- unix timestamp when photo was taken
 --     `duration_sec`         REAL,
 --     `region`               TEXT,  -- Geo region info. NOTE: not an exif tag, but derived from Keywords
     `chk_ts`  REAL NOT NULL DEFAULT (unixepoch()), -- unix timestamp of last check
-    UNIQUE (`content_id`)  -- Do not allow the same content to have multiple exif entries
+    UNIQUE (`content_id`)  -- Do not allow the same content to have multiple exif entries,
+    --CHECK (`type` LIKE "image/%" OR `type` LIKE "video/%") = (`ImageWidth` > 0 AND `ImageHeight` > 0),
+    --CHECK (`type` LIKE "image/%") != (`duration_sec` IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS `exif-ImageWidth-ImageHeight` on exif (`ImageWidth`, `ImageHeight`);
 CREATE INDEX IF NOT EXISTS `exif-Orientation` on exif (`Orientation`);
@@ -403,7 +402,7 @@ def flat_more(data) -> str | None:
     return data
 
 
-# pylint: disable=too-many-arguments
+# pylint: disable=too-many-arguments, too-many-locals
 def get_file_rec(
     fname: str,
     /,
@@ -416,15 +415,16 @@ def get_file_rec(
 ) -> Munch:
     """Get or create file record in memoization database.
 
-    :param str fname: _description_
-    :param _type_ func: _description_, defaults to lambdaf:{}
-    :param str cmd: _description_, defaults to ""
-    :param _type_ fstat: _description_, defaults to None
-    :param bool strict: _description_, defaults to False
-    :param t.Any on_nonexistent: _description_, defaults to FileNotFoundError
-    :raises NotARegularFileError: _description_
-    :raises on_nonexistent: _description_
-    :return Munch: _description_
+    :param fname: File name
+    :param func:funstion to call on file
+    :param cmd: CLI equivalent of func (to be used in cache key)
+    :param fstat: of fname; if given, spares a system call
+    :param strict: Whether to strictly check file integrity instead of relying on size+mtime
+    :param on_nonexistent: What to do if file does not exist: raise if Exception, or return this value
+    :raises FileNotFoundError: if on_nonexistent is Exception and file not found
+    :raises NotARegularFileError: if the file is not a regular file
+    :raises on_nonexistent: if on_nonexistent is an Exception and file not found
+    :return metadata dict or on_nonexistent value
     """
 
     @lru_cache()
@@ -470,9 +470,13 @@ def get_file_rec(
                 raise on_nonexistent(f"File not found: {res.fname}")
             return on_nonexistent
 
-        res.content_id = res.content_id or get_id(
-            cursor, "content", uniq=dict(md5=_md5_file(res.fname)), add=dict(size=size, md5_soul=None)
-        )
+        # res.content_id = res.content_id or get_id(
+        #     cursor, "content", uniq=dict(md5=_md5_file(res.fname)), add=dict(size=size, md5_soul=md5_soul(res.fname))
+        # )
+
+        if not res.content_id:
+            md5, md5_soul = extract_soul(res.fname, "md5", "md5_soul")  # .values()
+            res.content_id = get_id(cursor, "content", uniq=dict(md5=md5), add=dict(size=size, md5_soul=md5_soul))
 
         if not res.file_id:
             res.update(

@@ -20,6 +20,8 @@ import yaml
 from munch import Munch, munchify
 
 from umann.config import get_config
+from umann.digest import extract_soul
+from umann.digest.soul import SoulError
 from umann.metadata import chk_tz as _chk_tz
 from umann.metadata.chk_datetime import check_datetime_consistency
 from umann.metadata.chk_tz import NoCaptureDateTimeError, NoGpsError, TzMismatchError
@@ -397,13 +399,54 @@ def cli_command_chk(**kwargs):
         sys.exit(exit_code)
 
 
+@cli.command(name="soul")
+@click.argument("fnames", nargs=-1, required=True)
+def cli_command_soul(**kwargs):
+    """Print soul md5's of files in md5sum format.
+
+    For files without soul, print "_" chars instead.
+
+    For files with broken soul, print 32 chars from error message.
+
+    \b
+    Example:
+
+        \b
+        et soul tests/fixtures/data/test*jpg*
+        a10753441f92dcf6c3fea4dde18e8692  tests/fixtures/data/test.jpg
+        ________________________________  tests/fixtures/data/test.jpg.metadata.G0.yaml
+        ________________________________  tests/fixtures/data/test.jpg.metadata.G1.yaml
+        ERR:Expected_JPEG_SOI_marker,_go  tests/fixtures/data/test_error.jpg
+    """
+    cliopt = Munch(kwargs)
+
+    # Expand globs
+    expanded_fnames: list[str] = []
+    for wildcard in cliopt.fnames:
+        matches = glob.glob(wildcard)
+        expanded_fnames.extend(matches if matches else [wildcard])
+
+    # Process each file
+    for fname in expanded_fnames:
+        try:
+            md5_soul = extract_soul(fname)
+            if md5_soul is None:
+                # For files without soul (soulless files)
+                print(f"{'_' * 32}  {fname}")
+            else:
+                print(f"{md5_soul}  {fname}")
+        except SoulError as e:
+            # For errors, print 32 chars from error message
+            print(f"{('ERR:' + (str(e) + '_' * 32))[:32].replace(' ', '_')}  {fname}")
+
+
 def main():
     """Entry point that adds default 'get' subcommand if needed.
 
     This allows: et image.jpg  (instead of requiring: et get image.jpg)
     """
     # If first arg exists and is not a known subcommand or option, prepend 'get'
-    if sys.argv[1:] and not re.search(r"^(get|set|chk|-h|--help)$", sys.argv[1]):
+    if sys.argv[1:] and not re.search(r"^(get|set|chk|soul|-h|--help)$", sys.argv[1]):
         sys.argv.insert(1, "get")
     cli()
 
