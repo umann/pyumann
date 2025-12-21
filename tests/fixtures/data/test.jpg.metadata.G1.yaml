@@ -1,6 +1,6 @@
-- SourceFile: tests/fixtures/data/kalaka.jpg
+- SourceFile: tests/fixtures/data/test.jpg
   ExifTool:ExifToolVersion: 12.76
-  System:FileName: kalaka.jpg
+  System:FileName: test.jpg
   System:Directory: tests/fixtures/data
   System:FileSize: 73 kB
   System:FileModifyDate: 2025:10:26 22:56:39+01:00

@@ -16,4 +16,4 @@ def pytest_runtest_setup(item):
 @pytest.fixture
 def sample_image(test_data_dir) -> Path:
     """Provide path to sample test image."""
-    return test_data_dir / "kalaka.jpg"
+    return test_data_dir / "test.jpg"

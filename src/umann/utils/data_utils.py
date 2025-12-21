@@ -4,8 +4,13 @@ This module provides basic utility functions that are used across the project,
 particularly for handling dicts.
 """
 
+import re
 import typing as t
 from collections.abc import Iterable
+from contextlib import suppress
+from copy import deepcopy
+
+from deepmerge import Merger
 
 
 class NotSpecified:  # pylint: disable=too-few-public-methods
@@ -173,3 +178,89 @@ def recurse(data: T, func: t.Callable[[t.Any], t.Any], what: t.Iterable[str] = (
         return func(data) if "value" in what else data
 
     return _recurse(data, func, what)
+
+
+def merge_struct(data1: T, data2: T) -> T:
+    """
+    Deep-merge two JSON-like structures.
+
+    Rules:
+      - dict + dict   => deepmerge-style recursive merge
+      - anything else => take the 2nd value (data2)
+
+    Returns a NEW structure; does not mutate inputs.
+    """
+    base = deepcopy(data1)  # deepmerge mutates the first argument
+    _merger = Merger(
+        # Per-type strategies
+        [
+            (dict, ["merge"]),  # recursively merge dicts
+        ],
+        # Fallback strategies (for non-dict types: lists, ints, etc.)
+        ["override"],  # use value from data2
+        # Type conflict strategies (int vs dict, list vs dict, etc.)
+        ["override"],  # use value from data2
+    )
+    return _merger.merge(base, data2)
+
+
+def dict_only_keys(dic: dict, keys: t.Any, strict: bool = False, invert: bool = False) -> dict:
+    keys = set(listify(keys))  # convert str, int, float, etc. to 1-element set; list, dict, tuple etc to set
+    if strict and (should := [k for k in keys if k not in dic.keys()]):
+        raise KeyError(f"Keys(s) {should} should be in {dic}")
+    return {k: v for k, v in dic.items() if (k in keys) == (not invert)}
+
+
+# def dict_without_keys(dic: dict, keys: t.Any, strict: bool = False) -> dict:
+#     return dict_only_keys(dic, keys, strict, invert=True)
+
+
+def validate(value, predicate: t.Callable[[t.Hashable, t.Any], bool] | list | set | tuple | dict | re.Pattern) -> bool:
+    """Validate a value against a predicate.
+
+    Args:
+        value: The value to validate.
+        predicate: A function that takes a key and value and returns True or False,
+                   or a collection (list, set, tuple) to check membership,
+                   or a dict to check value,
+                   or a regex pattern to match strings.
+
+    Returns:
+        True if the value satisfies the predicate, False otherwise.
+    """
+
+    def _validate():  # pylint: disable=too-many-return-statements
+        with suppress(Exception):
+            if callable(predicate):
+                return predicate(value)
+            if isinstance(predicate, (list, set, tuple)):
+                return value in predicate
+            if isinstance(predicate, dict):
+                return predicate.get(value)
+            if isinstance(predicate, bool):
+                return predicate
+            if isinstance(predicate, (str, int, float)):
+                return predicate == value
+            if isinstance(predicate, re.Pattern):
+                return bool(predicate.search(value))
+        return None
+
+    return bool(_validate())
+
+
+def split_dict(
+    dic: dict, predicate: t.Callable[[t.Hashable, t.Any], bool] | list | set | tuple | dict | re.Pattern
+) -> tuple[dict, dict]:
+    """Split a dictionary into two based on a predicate.
+
+    Args:
+        dic: The input dictionary to split.
+        func: A function that takes a key and value and returns True or False.
+
+    Returns:
+        A tuple of two dictionaries: (dict_true, dict_false)
+    """
+    res = {True: {}, False: {}}
+    for key, value in dic.items():
+        res[validate(value, predicate)][key] = value
+    return tuple(res.values())

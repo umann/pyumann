@@ -24,7 +24,7 @@ class TestEtIntegration(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.test_data_dir = get_test_data_dir()
-        self.sample_image = self.test_data_dir / "kalaka.jpg"
+        self.sample_image = self.test_data_dir / "test.jpg"
 
     def test_get_metadata_from_sample(self):
         """Test reading metadata from the included sample image.
