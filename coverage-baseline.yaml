@@ -15,7 +15,7 @@ files:
   src/umann/geo/tz4d.py: 100.0
   src/umann/metadata/chk_datetime.py: 78.9
   src/umann/metadata/chk_tz.py: 81.8
-  src/umann/metadata/et.py: 75
+  src/umann/metadata/md.py: 75
   src/umann/metadata/memoize.py: 31.1
   src/umann/utils/data_utils.py: 65.8
   src/umann/utils/encoding_utils.py: 38.9

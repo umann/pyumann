@@ -6,6 +6,7 @@ metadata in image files. It includes both command-line and programmatic interfac
 
 import copy
 import glob
+import os
 import re
 import shlex
 import sys
@@ -244,7 +245,7 @@ def set_metadata(fname_s: str | t.Iterable[str], tags, /, **kwargs):
 def check_timezone_consistency(metadata: dict[str, t.Any], /, tolerance_in_meters: int = 200) -> None:
     """Public wrapper that normalizes missing-data errors to TzMismatchError.
 
-    This keeps unit-test expectations simple when importing from `umann.metadata.et`.
+    This keeps unit-test expectations simple when importing from `umann.metadata.md`.
     The CLI uses the underlying implementation directly to skip files with missing data.
     """
     try:
@@ -257,9 +258,9 @@ def check_timezone_consistency(metadata: dict[str, t.Any], /, tolerance_in_meter
 def cli():
     """ExifTool metadata operations CLI.
 
-    Get metadata: et image.jpg  (or: et get image.jpg)
-    Set metadata: et set --tags '{"Key": "value"}' image.jpg
-    Check timezone: et chk image.jpg
+    Get metadata: md image.jpg  (or: md get image.jpg)
+    Set metadata: md set --tags '{"Key": "value"}' image.jpg
+    Check timezone: md chk image.jpg
     """
 
 
@@ -279,9 +280,9 @@ def cli_command_get(**kwargs):
     """Get metadata from image files (default command).
 
     Examples:
-        et get image.jpg
-        et get *.jpg --transform cool_out
-        et get image.jpg --dictify
+        md get image.jpg
+        md get *.jpg --transform cool_out
+        md get image.jpg --dictify
     """
     cliopt = Munch(kwargs)
 
@@ -328,8 +329,8 @@ def cli_command_set(fnames, tags_yaml, transformations):
     """Set metadata tags in image files.
 
     Examples:
-        et set --tags '{"IPTC:Keywords": "tag1, tag2"}' image.jpg
-        et set --tags '{"XMP:Subject": "test"}' *.jpg --transform cool_in
+        md set --tags '{"IPTC:Keywords": "tag1, tag2"}' image.jpg
+        md set --tags '{"XMP:Subject": "test"}' *.jpg --transform cool_in
     """
     # Expand globs
     expanded_fnames: list[str] = []
@@ -363,8 +364,8 @@ def cli_command_chk(**kwargs):
     Verifies that timezone offset tags match the GPS coordinates and capture datetime.
 
     Examples:
-        et chk image.jpg
-        et chk *.jpg --tolerance 500
+        md chk image.jpg
+        md chk *.jpg --tolerance 500
     """
     cliopt = Munch(kwargs)
 
@@ -412,7 +413,7 @@ def cli_command_soul(**kwargs):
     Example:
 
         \b
-        et soul tests/fixtures/data/test*jpg*
+        md soul tests/fixtures/data/test*jpg*
         a10753441f92dcf6c3fea4dde18e8692  tests/fixtures/data/test.jpg
         ________________________________  tests/fixtures/data/test.jpg.metadata.G0.yaml
         ________________________________  tests/fixtures/data/test.jpg.metadata.G1.yaml
@@ -443,14 +444,16 @@ def cli_command_soul(**kwargs):
 def main():
     """Entry point that adds default 'get' subcommand if needed.
 
-    This allows: et image.jpg  (instead of requiring: et get image.jpg)
+    This allows: md image.jpg  (instead of requiring: md get image.jpg)
     """
-    # If first arg exists and is not a known subcommand or option, prepend 'get'
-    if sys.argv[1:] and not re.search(r"^(get|set|chk|soul|-h|--help)$", sys.argv[1]):
-        sys.argv.insert(1, "get")
+    # Skip argv rewrites while shell completion is running
+    if "_MD_COMPLETE" not in os.environ:
+        # If first arg exists and is not a known subcommand or option, prepend 'get'
+        if sys.argv[1:] and not re.search(r"^(get|set|chk|soul|-h|--help)$", sys.argv[1]):
+            sys.argv.insert(1, "get")
     cli()
 
 
-# entry point `et` is defined in pyproject.toml
+# entry point `md` is defined in pyproject.toml
 if __name__ == "__main__":
     main()
