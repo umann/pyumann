@@ -8,7 +8,7 @@ pyumann is a Python toolset with a focus on metadata manipulation and utility fu
 ## Key Components
 
 ### Metadata Tools (`umann/metadata/`)
-- `et.py`: ExifTool wrapper for image metadata manipulation
+- `md.py`: ExifTool wrapper (and more) for image metadata manipulation
   - Uses `pyexiftool` for metadata operations
   - Supports both single and batch file operations
   - Handles GPS and keyword tag transformations
@@ -65,6 +65,6 @@ pip install -e ".[dev]"
 ### Using CLI Tools
 Example of metadata operations:
 ```bash
-et image.jpg  # Get metadata
-et --set '{"IPTC:Keywords": "tag1, tag2"}' image.jpg  # Set metadata
+md image.jpg  # Get metadata
+md --set '{"IPTC:Keywords": "tag1, tag2"}' image.jpg  # Set metadata
 ```

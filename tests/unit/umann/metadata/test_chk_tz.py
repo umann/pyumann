@@ -3,7 +3,7 @@
 import pytest
 
 from umann.metadata.chk_tz import TzMismatchError
-from umann.metadata.et import check_timezone_consistency
+from umann.metadata.md import check_timezone_consistency
 
 pytestmark = pytest.mark.unit
 

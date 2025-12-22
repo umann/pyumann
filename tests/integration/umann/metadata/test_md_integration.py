@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from tests.utils import get_test_data_dir
-from umann.metadata import et
+from umann.metadata import md
 from umann.utils.yaml_utils import yaml_safe_load_file
 
 pytestmark = pytest.mark.integration
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.integration
 
 @unittest.skipIf(shutil.which("exiftool") is None, "exiftool not installed")
 class TestEtIntegration(unittest.TestCase):
-    """Integration tests for the et module."""
+    """Integration tests for the md module."""
 
     def setUp(self):
         """Set up test fixtures."""
@@ -35,8 +35,8 @@ class TestEtIntegration(unittest.TestCase):
         self.assertTrue(self.sample_image.exists(), f"sample file not found: {self.sample_image}")
 
         # Use the multi-file helper to get a stable dict mapping
-        meta_map = et.get_metadata_multi([str(self.sample_image)])
-        # et.get_metadata_multi returns dict[file_path -> metadata_dict]
+        meta_map = md.get_metadata_multi([str(self.sample_image)])
+        # md.get_metadata_multi returns dict[file_path -> metadata_dict]
         meta = meta_map.get(str(self.sample_image)) or meta_map.get(self.sample_image.name)
         self.assertIsInstance(meta, dict)
 
@@ -51,7 +51,7 @@ class TestEtIntegration(unittest.TestCase):
         """Test transform_tags with real metadata from sample file."""
         self.assertTrue(self.sample_image.exists())
 
-        meta_map = et.get_metadata_multi([str(self.sample_image)])
+        meta_map = md.get_metadata_multi([str(self.sample_image)])
         meta = meta_map.get(str(self.sample_image)) or meta_map.get(self.sample_image.name)
         self.assertIsInstance(meta, dict)
 
@@ -64,7 +64,7 @@ class TestEtIntegration(unittest.TestCase):
         self.assertTrue(yaml_path.exists(), f"metadata YAML not found: {yaml_path}")
 
         # Get actual metadata
-        meta_map = et.get_metadata_multi([str(self.sample_image)])
+        meta_map = md.get_metadata_multi([str(self.sample_image)])
         actual_meta = meta_map.get(str(self.sample_image)) or meta_map.get(self.sample_image.name)
         self.assertIsInstance(actual_meta, dict)
 

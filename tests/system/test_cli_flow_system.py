@@ -10,7 +10,7 @@ import yaml
 from click.testing import CliRunner
 
 from tests.utils import get_test_data_dir
-from umann.metadata.et import cli as et_cli
+from umann.metadata.md import cli as et_cli
 
 pytestmark = pytest.mark.system
 

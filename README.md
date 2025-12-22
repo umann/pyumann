@@ -62,36 +62,36 @@ This will:
 
 ### Command Line Interface
 
-The package provides the `et` command-line tool for metadata operations:
+The package provides the `md` command-line tool for metadata operations:
 
 ```bash
 # Get metadata from an image
-et image.jpg
+md image.jpg
 
 # Process multiple files
-et *.jpg
+md *.jpg
 
 # Get one file metadata in same dictionary-by-filename format
-et --dictify image.jpg
+md --dictify image.jpg
 
 # Set metadata tags
-et --set '{"IPTC:Keywords": "tag1, tag2"}' image.jpg
+md --set '{"IPTC:Keywords": "tag1, tag2"}' image.jpg
 
 ```
 
 ### Python API
 
 ```python
-from umann.metadata import et
+from umann.metadata import md
 
 # Get metadata from a file
-metadata = et.get_metadata('image.jpg')
+metadata = md.get_metadata('image.jpg')
 
 # Get metadata from multiple files
-metadata_dict = et.get_metadata_multi(['image1.jpg', 'image2.jpg'])
+metadata_dict = md.get_metadata_multi(['image1.jpg', 'image2.jpg'])
 
 # Set metadata tags
-et.set_tags('image.jpg', {'IPTC:Keywords': ['tag1', 'tag2']})
+md.set_tags('image.jpg', {'IPTC:Keywords': ['tag1', 'tag2']})
 ```
 
 ## Configuration

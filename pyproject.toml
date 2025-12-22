@@ -37,7 +37,7 @@ dev = [
 ]
 
 [project.scripts]
-et = "umann.metadata.et:main"
+md = "umann.metadata.md:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
