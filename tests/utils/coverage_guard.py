@@ -7,6 +7,7 @@ Behavior:
   - Parses coverage.xml for per-file line-rate (rounded to 1 decimal)
   - Loads coverage-baseline.yaml
   - If any file's coverage falls: fails with exit 1
+    - If a file appears for the first time and is below baseline minimum: fails with exit 1
   - If coverage stays same or improves: auto-writes new baseline
   - Warns if baseline updated and git tree was clean (helps catch accidental updates)
 """
@@ -48,7 +49,7 @@ def load_current_coverage():
             rate = covered / valid
         return round_it(rate * 100.0)
 
-    current: dict = {"overall": get_rate(), "files": {}}
+    current: dict = {"total": get_rate(), "files": {}}
     for cls in root.findall(".//classes/class"):
         try:
             pct = round_it(float(cls.get("line-rate")) * 100)
@@ -128,10 +129,23 @@ def main() -> int:
     # Load baseline or initialize empty if missing
     # Do or do not, there is no try. Restore from repo if you deleted it by accident.
     baseline = yaml.safe_load(BASELINE_YAML.read_text(encoding="utf-8")) or {}
+    any_change = False
+
+    # Backward-compatible migration from old key name.
+    if "total" not in baseline and "overall" in baseline:
+        baseline["total"] = baseline.pop("overall")
+        any_change = True
+
+    # Default minimum threshold for newly appearing files.
+    if "minimum" not in baseline:
+        baseline["minimum"] = 0
+        any_change = True
+
+    minimum = round_it(get_multi(baseline, ["minimum"], 0))
+
     # Check for regressions
     errors: list[str] = []
-    datapaths = [["overall"]] + [["files", fname] for fname in baseline.get("files", {}) | current.get("files", {})]
-    any_change = False
+    datapaths = [["total"]] + [["files", fname] for fname in baseline.get("files", {}) | current.get("files", {})]
     for datapath in datapaths:
         old_pct = round_it(get_multi(baseline, datapath, None))
         new_pct = round_it(get_multi(current, datapath, None))
@@ -139,6 +153,9 @@ def main() -> int:
             dict(current=current, baseline=baseline, datapath=datapath)
         )
         if old_pct is None:
+            if datapath[0] == "files" and new_pct is not None and minimum is not None and new_pct + 1e-9 < minimum:
+                errors.append(f"  {datapath[1]}: new file coverage {new_pct}% is below minimum {minimum}%")
+                continue
             set_multi(baseline, datapath, new_pct)
             any_change = True
             print(f"[INFO] added {datapath}")
@@ -148,9 +165,15 @@ def main() -> int:
             any_change = True
             print(f"[INFO] removed {datapath}")
             continue
+        if new_pct > old_pct + 1e-9:
+            set_multi(baseline, datapath, new_pct)
+            any_change = True
+            print(f"[INFO] improved {datapath}: {old_pct}% -> {new_pct}%")
+            continue
         # Fail if coverage falls (beyond rounding tolerance)
         if new_pct + 1e-9 < old_pct:
-            errors.append(f"  {datapath}: {old_pct}% -> {new_pct}% ({new_pct - old_pct:.1f}%)")
+            nicer_datapath = "TOTAL" if datapath == ["total"] else datapath[1]
+            errors.append(f"  {nicer_datapath}: {old_pct}% -> {new_pct}% ({new_pct - old_pct:.1f}%)")
     if errors:
         print("\n".join(["Coverage decreased:"] + errors + [f"See {BASELINE_YAML}"]))
         return 1

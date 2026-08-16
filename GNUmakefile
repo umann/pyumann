@@ -1,4 +1,9 @@
-.PHONY: help dev install test unit integration system regression clean lint format setup-hooks
+# Env vars
+PYTHON=.venv/bin/python
+PRE_COMMIT=${PYTHON} -m pre_commit
+VULTURE=${PYTHON} -m umann.utils.vulture_wrapper
+
+.PHONY: help dev install build-c test unit integration system regression clean lint format setup-hooks vulture
 
 # Default target
 help:
@@ -12,6 +17,8 @@ help:
 	@echo "  system      - Run system tests only"
 	@echo "  regression  - Run regression tests only"
 	@echo "  lint        - Run pylint on source and tests"
+	@echo "  vulture     - Scan for unused Python code"
+	@echo "  difflint    - Run pylint on git diff --name-only"
 	@echo "  format      - Format code with black and isort"
 	@echo "  clean       - Remove build artifacts and cache files"
 
@@ -20,11 +27,29 @@ dev:
 	pip install -e ".[dev]"
 	@echo ""
 	@echo "Installing git hooks..."
-	pre-commit install
-	pre-commit install --hook-type pre-push
+	${PRE_COMMIT} install
+	${PRE_COMMIT} install --hook-type pre-push
 	@echo ""
 	@echo "Development environment ready."
 	@echo "Git hooks are installed and will run automatically on commit/push"
+	$(MAKE) build-c
+
+# Build C utilities
+bin/iter_dir_to_csv: src/c/iter_dir_to_csv.c
+	@echo "Compiling C utilities..."
+	@mkdir -p bin
+	@gcc -o bin/iter_dir_to_csv src/c/iter_dir_to_csv.c -l ssl -l crypto || \
+		echo "gcc not available or compilation failed - will use Python fallback"
+	@true
+
+bin/iter_dir_to_csv.exe: src/c/iter_dir_to_csv.c
+	@echo "Cross-compiling Windows executable..."
+	@mkdir -p bin
+	@x86_64-w64-mingw32-gcc -o bin/iter_dir_to_csv.exe src/c/iter_dir_to_csv.c -l ssl -l crypto || \
+		echo "x86_64-w64-mingw32-gcc not available or compilation failed - skipping Windows executable"
+	@true
+
+build-c: bin/iter_dir_to_csv bin/iter_dir_to_csv.exe
 
 # Regular installation
 install:
@@ -39,38 +64,44 @@ install:
 # Run all tests (with pre-commit checks)
 test:
 	@echo "Running pre-commit checks..."
-	pre-commit run --all-files
+	${PRE_COMMIT} run --all-files
 	@echo "\nChecking for dead code..."
-	vulture
+	@${VULTURE}
 	@echo "\nRunning all tests with coverage..."
-	python -m pytest tests/ --cov=umann --cov-report=term-missing --cov-report=xml:coverage.xml
+	${PYTHON} -m pytest tests/ --cov=umann --cov-report=term-missing --cov-report=xml:coverage.xml
 	@echo "\nChecking coverage against baseline..."
-	python tests/utils/coverage_guard.py
+	${PYTHON} tests/utils/coverage_guard.py
 
 # Run unit tests only
 unit:
-	python -m pytest tests/ -m unit
+	${PYTHON} -m pytest tests/ -m unit
 
 # Run integration tests only
 integration:
-	python -m pytest tests/ -m integration
+	${PYTHON} -m pytest tests/ -m integration
 
 # Run system tests only
 system:
-	python -m pytest tests/ -m system
+	${PYTHON} -m pytest tests/ -m system
 
 # Run regression tests only
 regression:
-	python -m pytest tests/ -m regression
+	${PYTHON} -m pytest tests/ -m regression
 
 # Run linter
 lint:
-	python -m pylint src/umann tests/
+	${PYTHON} -m umann.utils.pylint_wrapper src/umann tests/
+
+vulture:
+	@${VULTURE}
+
+difflint:
+	${PYTHON} -m umann.utils.pylint_wrapper $(shell git diff --name-only HEAD~1 | grep -E '\.py$$')
 
 # Format code
 format:
-	python -m black src/ tests/
-	python -m isort src/ tests/
+	${PRE_COMMIT} run black --all-files
+	${PRE_COMMIT} run isort --all-files
 
 # Clean build artifacts
 clean:

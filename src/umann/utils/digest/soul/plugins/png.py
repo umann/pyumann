@@ -4,22 +4,24 @@ PNG soul consists of the IDAT (Image Data) chunks containing the
 compressed image data. This excludes PNG metadata chunks.
 """
 
-from umann.digest.soul import Soul, SoulError, SoulPlugin
+from umann.utils.digest.soul import Soul, SoulError, SoulPlugin
 
 
 class PNGPlugin(SoulPlugin):
     """Extract soul from PNG files."""
 
+    SUPPORTED_EXTENSIONS = {
+        ".png",
+    }
     SIGNATURE = b"\x89PNG\r\n\x1a\n"
     IDAT = b"IDAT"
     CRC_LENGTH = 4
     MAX_CHUNKS = 1000
 
     @classmethod
-    def can_handle(cls, soul: Soul) -> bool:
+    def can_handle_content(cls, soul: Soul) -> bool:
         """Check if file is PNG."""
-        if soul.file:
-            return soul.file.suffix.lower() == ".png"
+
         # Check PNG signature
         return soul.content[:8] == cls.SIGNATURE
 

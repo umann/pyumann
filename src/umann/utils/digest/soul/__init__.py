@@ -5,11 +5,13 @@ By hashing the soul, you can compare if two files differ only in metadata.
 """
 
 import hashlib
+import traceback
 import typing as t
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 import yaml
+from munch import Munch
 
 
 class SoulError(Exception):
@@ -41,11 +43,14 @@ class Soul:
     # Registry of plugin classes
     _plugins: list[type["SoulPlugin"]] = []
 
+    # Supported media file extensions (populated by plugins)
+    _supported_extensions: set[str] = set()
+
     # File size limits
     # BUFFER_SIZE = 2**20  # 1 MB
     # MEMORY_LIMIT = 2**30  # 1 GB
 
-    SIMPLE_FIELDS = {"offset", "length", "content", "size"}
+    SIMPLE_FIELDS = {"offset", "length", "content", "size", "soul_error"}
 
     def __init__(
         self,
@@ -76,12 +81,16 @@ class Soul:
         self._soul: bytes | None = None  # Cached soul bytes
         self._pos: int = 0  # Current read position
         self.soulless: bool = False  # If True, file has no soul (e.g. text files)
+        self.soul_error: Munch[t.Literal["message", "traceback"], str] | None = None
 
     @classmethod
     def register_plugin(cls, plugin: type["SoulPlugin"]):
         """Register a plugin class for handling specific file types."""
         if plugin not in cls._plugins:
             cls._plugins.append(plugin)
+            # Register plugin's supported extensions
+            if hasattr(plugin, "SUPPORTED_EXTENSIONS"):
+                cls._supported_extensions.update(plugin.SUPPORTED_EXTENSIONS)
 
     @property
     def size(self) -> int:
@@ -94,6 +103,10 @@ class Soul:
     def content(self) -> bytes:
         """Get entire file content as bytes."""
         if self._content is None:
+            # Prevent reading huge files into memory (> 2GB)
+            if self.size > 2 * 1024 * 1024 * 1024:
+
+                raise SoulError(f"{self.file=} too large to read into memory: {self.size} bytes")
             self._content = self.file.read_bytes()
         return self._content
 
@@ -188,17 +201,78 @@ class Soul:
 
         raise NoHandlerError(f"No plugin can handle {self.file or 'content'}")
 
+    def _reset_result_state(self, *, soulless: bool) -> "Soul":
+        """Reset runtime state for the current soul extraction."""
+        self.soulless = soulless
+        self.offset = None
+        self.length = None
+        self._soul = None
+        return self
+
+    def _is_unsupported_file(self) -> bool:
+        """Return True when the file type is not supported by any registered plugin."""
+        return bool(self.file and self.file.suffix.lower() not in self._supported_extensions)
+
     def compute(self) -> "Soul":
         """Compute soul offset and length using appropriate plugin.
 
         Returns:
             Self for method chaining
         """
-        plugin_class = self.find_plugin()
-        plugin = plugin_class(self)
-        plugin.handle()
-        # breakpoint()
+        if self._is_unsupported_file():
+            return self._reset_result_state(soulless=True)
+
+        try:
+            plugin_class = self.find_plugin()
+            plugin = plugin_class(self)
+            plugin.handle()
+        except (SoulError, MemoryError) as e:
+            error_msg = (
+                str(e) if not isinstance(e, MemoryError) else f"Out of memory processing file ({self.size} bytes)"
+            )
+            self.soul_error = Munch(message=error_msg, traceback=traceback.format_exc())
+            return self._reset_result_state(soulless=True)
+
+        if self.soulless:
+            return self._reset_result_state(soulless=True)
+
         return self
+
+    def _populate_simple_results(self, results: dict[str, t.Any], fields: tuple[str, ...]) -> None:
+        """Populate simple scalar fields from the Soul instance."""
+        for field in self.SIMPLE_FIELDS:
+            if field in fields:
+                results[field] = getattr(self, field)
+
+    def _populate_soul_results(self, results: dict[str, t.Any], fields: tuple[str, ...]) -> None:
+        """Populate soul-related results when requested."""
+        if "soul" not in fields and "md5_soul" not in fields:
+            return
+
+        if self.soulless:
+            results["soul"] = None
+            return
+
+        if self._soul is None:
+            self._soul = self.subcontent()
+        results["soul"] = self._soul
+
+    def _populate_md5_results(self, results: dict[str, t.Any], fields: tuple[str, ...]) -> None:
+        """Populate md5-related results when requested."""
+        if "md5_soul" not in fields and "md5" not in fields:
+            return
+
+        if "md5_soul" in fields:
+            results["md5_soul"] = None if self.soulless else self._hasher(self._soul or self.subcontent())
+
+        if "md5" in fields:
+            # Use streaming MD5 for files to avoid loading entire file into memory
+            if self.file:
+                from umann.utils.fs_utils import md5_file  # pylint: disable=import-outside-toplevel
+
+                results["md5"] = md5_file(str(self.file))
+            else:
+                results["md5"] = self._hasher(self.content)
 
     def result(self, *fields: str | list[str]) -> t.Any:
         """Get result fields.
@@ -223,40 +297,18 @@ class Soul:
             >>> Soul("img.jpg").compute().result("offset", "length")
             (89, 35)
         """
-        if not fields:
-            fields = ("md5_soul",)
-
-        # Ensure length is set
+        normalized_fields = tuple(fields) if fields else ("md5_soul",)
         if self.length is None and self.offset is not None:
             self.length = self.size - self.offset
 
-        # Build results dict
-        results = {}
+        results: dict[str, t.Any] = {}
+        self._populate_simple_results(results, normalized_fields)
+        self._populate_soul_results(results, normalized_fields)
+        self._populate_md5_results(results, normalized_fields)
 
-        # Simple fields
-        for field in self.SIMPLE_FIELDS:
-            if field in fields:
-                results[field] = getattr(self, field)
-
-        # Computed fields
-        if "soul" in fields or "md5_soul" in fields:
-            if self.soulless:
-                results["soul"] = None
-            else:
-                if self._soul is None:
-                    self._soul = self.subcontent()
-                results["soul"] = self._soul
-
-        if "md5_soul" in fields:
-            results["md5_soul"] = None if self.soulless else self._hasher(self._soul or self.subcontent())
-
-        if "md5" in fields:
-            results["md5"] = self._hasher(self.content)
-
-        # Return single value or tuple
-        if len(fields) == 1:
-            return results[fields[0]]
-        return tuple(results[f] for f in fields)
+        if len(normalized_fields) == 1:
+            return results[normalized_fields[0]]
+        return tuple(results[f] for f in normalized_fields)
 
 
 class SoulPlugin(ABC):
@@ -265,6 +317,7 @@ class SoulPlugin(ABC):
     Each plugin handles a specific file format (JPG, MP3, etc).
     """
 
+    SUPPORTED_EXTENSIONS = set()  # Set of file extensions this plugin can handle
     rank = 1  # Default priority. Lower rank = higher priority. Used in can_handle selection.
     # The Default plugin should have the lowest priority to allow other plugins to handle known formats.
 
@@ -272,9 +325,23 @@ class SoulPlugin(ABC):
         """Initialize plugin with Soul instance."""
         self.soul = soul
 
+    # Attribute name "SUPPORTED_EXTENSIONS" doesn't conform to snake_case naming style
+    # pylint: disable=invalid-name  # TODO
+    @classmethod
+    def can_handle(cls, soul: Soul) -> bool | None:
+        if (ret := cls.can_handle_ext(soul)) is not None:
+            return ret
+        return cls.can_handle_content(soul)
+
+    @classmethod
+    def can_handle_ext(cls, soul: Soul) -> bool | None:
+        if soul.file:
+            return soul.file.suffix.lower() in cls.SUPPORTED_EXTENSIONS
+        return None
+
     @classmethod
     @abstractmethod
-    def can_handle(cls, soul: Soul) -> bool:
+    def can_handle_content(cls, soul: Soul) -> bool:
         """Check if this plugin can handle the given file.
 
         Args:

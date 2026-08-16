@@ -7,22 +7,30 @@ MP3 soul is the compressed audio data between:
 This excludes ID3 metadata tags.
 """
 
-from umann.digest.soul import Soul, SoulError, SoulPlugin
+from umann.utils.digest.soul import Soul, SoulError, SoulPlugin
 
 
 class MP3Plugin(SoulPlugin):
     """Extract soul from MP3 files."""
 
-    MP3_FRAME_SYNC = b"\xff\xfb"
+    SUPPORTED_EXTENSIONS = {".mp3"}
+    # Frame sync is 11 consecutive 1-bits: 0xFFE mask over the first 2 bytes.
+    # Many valid headers exist (MPEG version/layer/protection differ), so don't
+    # hardcode a single value like 0xFFFB. Accept any header where:
+    #   first byte == 0xFF and (second byte & 0xE0) == 0xE0
+    # This matches the 11-bit sync regardless of version/layer bits.
     ID3V1_SIZE = 128
 
+    @staticmethod
+    def _is_frame_sync(hdr2: bytes) -> bool:
+        return len(hdr2) == 2 and hdr2[0] == 0xFF and (hdr2[1] & 0xE0) == 0xE0
+
     @classmethod
-    def can_handle(cls, soul: Soul) -> bool:
+    def can_handle_content(cls, soul: Soul) -> bool:
         """Check if file is MP3."""
-        if soul.file:
-            return soul.file.suffix.lower() == ".mp3"
+
         # Check for ID3 or MP3 frame sync
-        return soul.content[:3] == b"ID3" or soul.content[:2] == cls.MP3_FRAME_SYNC
+        return soul.content[:3] == b"ID3" or cls._is_frame_sync(soul.content[:2])
 
     def handle(self) -> None:
         """Extract MP3 soul by skipping ID3v2 headers and ID3v1 trailer."""
@@ -49,7 +57,9 @@ class MP3Plugin(SoulPlugin):
         s.offset = s.pos
 
         # Verify MP3 frame sync
-        s.pos_read(2, self.MP3_FRAME_SYNC)
+        hdr2 = s.pos_read(2)
+        if not self._is_frame_sync(hdr2):
+            raise SoulError(f"Expected MP3 frame sync (0xFFE mask), got {hdr2!r} at pos {s.pos - 2}")
 
         # Calculate length (rest of file minus potential ID3v1 trailer)
         s.length = s.size - s.offset

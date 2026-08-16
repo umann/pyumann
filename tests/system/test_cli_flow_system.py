@@ -48,8 +48,8 @@ class TestCliFlow(unittest.TestCase):
 
         # 2. Modify tags
         new_tags = {
-            "IPTC:Keywords": "test1, test2",
-            "XMP:Subject": "subject1; subject2",
+            "IPTC:Keywords": ["test1", "test2"],
+            "XMP:Subject": ["subject1", "subject2"],
         }
         args = (
             et_cli,
@@ -57,8 +57,6 @@ class TestCliFlow(unittest.TestCase):
                 "set",
                 "--tags",
                 yaml.dump(new_tags, default_flow_style=True).strip(),
-                "--transform",
-                "cool_in",
                 str(image_path),
             ],
         )
@@ -68,9 +66,16 @@ class TestCliFlow(unittest.TestCase):
         # 3. Read back and verify
         result = self.runner.invoke(et_cli, ["get", str(image_path)])
         self.assertEqual(result.exit_code, 0)
-        updated_meta = yaml.safe_load(result.output)
-        self.assertIn("test1", updated_meta.get("IPTC:Keywords", []))
-        self.assertIn("subject1", updated_meta.get("XMP-dc:Subject", []))
+        updated_meta_map = yaml.safe_load(result.output)
+        updated_meta = updated_meta_map.get(str(image_path)) or updated_meta_map.get(image_path.name) or {}
+
+        def as_text(values):
+            if isinstance(values, list):
+                return " ".join(str(v) for v in values)
+            return str(values)
+
+        self.assertIn("test1", as_text(updated_meta.get("IPTC:Keywords", "")))
+        self.assertIn("subject1", as_text(updated_meta.get("XMP-dc:Subject", "")))
 
 
 if __name__ == "__main__":

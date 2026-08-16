@@ -77,3 +77,12 @@ Thumbs.db
 # Data to be downloaded/built
 data/
 !data/tz/.url
+
+# symlinks
+http:/
+
+/*.jpg
+
+# binary executables, can be rebuilt from source
+bin/iter_dir_to_csv
+bin/iter_dir_to_csv.exe

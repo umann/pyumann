@@ -6,7 +6,7 @@ This excludes MP4 metadata and container structure.
 
 import struct
 
-from umann.digest.soul import Soul
+from umann.utils.digest.soul import Soul
 
 from ._isobmff import IsoBmffPluginBase
 
@@ -14,13 +14,11 @@ from ._isobmff import IsoBmffPluginBase
 class MP4Plugin(IsoBmffPluginBase):
     """Extract soul from MP4 files."""
 
+    SUPPORTED_EXTENSIONS = {".mp4", ".m4v", ".m4a"}
+
     @classmethod
-    def can_handle(cls, soul: Soul) -> bool:
+    def can_handle_content(cls, soul: Soul) -> bool:
         """Check if file is MP4/M4V/M4A."""
-        if soul.file:
-            suffix = soul.file.suffix.lower()
-            if suffix in (".mp4", ".m4v", ".m4a"):
-                return True
 
         # Check for ftyp atom at start (ISO base media file format)
         if soul.size >= 12:

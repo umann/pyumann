@@ -17,13 +17,19 @@ dependencies = [
   "click",
   "deepmerge",
   "munch",
+  "numpy",
+  "PyICU",
+  "python-dateutil",
   "pyexiftool",
+  "requests",
   "shapely",
   "rtree",
+  "sqlparse",
 ]
 
 [project.optional-dependencies]
 dev = [
+  "deptry",
   "black",
   "isort",
   "pylint",
@@ -34,7 +40,30 @@ dev = [
   "parameterized",
   "vulture",
   "docstring-parser",
+  "jsonschema"
 ]
+
+[tool.deptry]
+known_first_party = ["umann"]
+optional_dependencies_dev_groups = ["dev"]
+exclude = ["[.]venv", "[.]git", "playground"]
+
+[tool.deptry.package_module_name_map]
+PyICU = "icu"
+
+# [tool.deptry.per_rule_ignores]
+# DEP002 = [
+#   "deptry",
+#   "black",
+#   "isort",
+#   "pylint",
+#   "pytest-cov",
+#   "pytest",
+#   "pre-commit",
+#   "vulture",
+#   "docstring-parser",
+#   "jsonschema"
+# ]
 
 [project.scripts]
 md = "umann.metadata.md:main"
@@ -44,6 +73,7 @@ package-dir = {"" = "src"}
 
 [tool.black]
 line-length = 119
+target-version = ["py312"]
 
 [tool.pylint]
 max-line-length = 119
@@ -68,7 +98,7 @@ disable = [
 #     "file-ignored",
 #     "fixme",
 #     "locally-disabled",
-#     "logging-fstring-interpolation",
+    "logging-fstring-interpolation",
 #     "missing-class-docstring",
 #     "missing-function-docstring",
 #     "missing-module-docstring",
@@ -81,6 +111,7 @@ disable = [
      "fixme",
 #     "useless-suppression",
 #     "wrong-import-order",
+#      "slogging-fstring-interpolation",
 ]
 
 [tool.pylint.tests]

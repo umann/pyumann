@@ -1,25 +1,35 @@
 files:
-  src/umann/config.py: 75
-  src/umann/digest/__init__.py: 100.0
-  src/umann/digest/soul/__init__.py: 89.5
-  src/umann/digest/soul/plugins/__init__.py: 100.0
-  src/umann/digest/soul/plugins/_isobmff.py: 75.0
-  src/umann/digest/soul/plugins/avi.py: 83.8
-  src/umann/digest/soul/plugins/default.py: 77.8
-  src/umann/digest/soul/plugins/jpeg.py: 82.5
-  src/umann/digest/soul/plugins/mov.py: 66.7
-  src/umann/digest/soul/plugins/mp3.py: 90.9
-  src/umann/digest/soul/plugins/mp4.py: 88.9
-  src/umann/digest/soul/plugins/png.py: 83.3
+  src/umann/config.py: 92.3
+  src/umann/constant.py: 100.0
+  src/umann/db/model.py: 94.3
   src/umann/geo/__init__.py: 100.0
   src/umann/geo/tz4d.py: 100.0
-  src/umann/metadata/chk_datetime.py: 78.9
+  src/umann/metadata/chk_datetime.py: 89.1
   src/umann/metadata/chk_tz.py: 81.8
-  src/umann/metadata/md.py: 75
-  src/umann/metadata/memoize.py: 31.1
-  src/umann/utils/data_utils.py: 65.8
-  src/umann/utils/encoding_utils.py: 38.9
-  src/umann/utils/fs_utils.py: 86.7
+  src/umann/metadata/et.py: 100.0
+  src/umann/metadata/md.py: 100.0
+  src/umann/metadata/memoize.py: 79.6
+  src/umann/platform.py: 100.0
+  src/umann/utils/data_utils.py: 99.6
+  src/umann/utils/db_utils.py: 78.1
+  src/umann/utils/digest/__init__.py: 100.0
+  src/umann/utils/digest/soul/__init__.py: 93.2
+  src/umann/utils/digest/soul/plugins/__init__.py: 100.0
+  src/umann/utils/digest/soul/plugins/_isobmff.py: 78.1
+  src/umann/utils/digest/soul/plugins/avi.py: 83.8
+  src/umann/utils/digest/soul/plugins/default.py: 100.0
+  src/umann/utils/digest/soul/plugins/jpeg.py: 85.7
+  src/umann/utils/digest/soul/plugins/mov.py: 100.0
+  src/umann/utils/digest/soul/plugins/mp3.py: 91.7
+  src/umann/utils/digest/soul/plugins/mp4.py: 93.3
+  src/umann/utils/digest/soul/plugins/png.py: 85.7
+  src/umann/utils/encoding_utils.py: 91.2
+  src/umann/utils/fs_utils.py: 93.6
+  src/umann/utils/log_utils.py: 83.3
+  src/umann/utils/pylint_wrapper.py: 100.0
+  src/umann/utils/sql_utils.py: 100.0
   src/umann/utils/trace_utils.py: 80.8
-  src/umann/utils/yaml_utils.py: 88.0
-overall: 75
+  src/umann/utils/vulture_wrapper.py: 76.8
+  src/umann/utils/yaml_utils.py: 100.0
+minimum: 75
+total: 91.2

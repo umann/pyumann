@@ -1,16 +1,50 @@
+default_lang: hu
+default_country: HU
 exiftool:
   group: G1
+  tags_config_dir: data/exiftool/
+  exts: ['.avi', '.bmp', '.gif', '.jpg', '.jpeg', '.png', '.mov', '.mp3', '.mp4', '.tiff']
 memoize:
   db:
-    path: /mnt/c/usr/local/cache/md.sqlite
+    path: /home/uk/.cache/pyumann/md.sqlite
 metadata:
   exts: ['.jpg', '.jpeg', '.png', '.avi', '.mp4', '.mov', '.mp3']
   soul:
     exts: ['.jpg', '.jpeg', '.png', '.avi', '.mp3']
+sidecars:
+  - fnmatch: '.picasa.ini'
+    engine: picasa
 picasa:
-  exts: ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.avi', '.mp4', '.mov']
+  exts: ['.avi', '.bmp', '.gif', '.jpg', '.jpeg', '.png', '.mov', '.mp4', '.tiff']  # no mp3
   dirs:
     - /mnt/f/photos
     - /mnt/f/scan
     - /mnt/f/videos
   namespace: http://umann.hu/kornel/picasa/1.0/
+  contacts_xml: /mnt/c/Users/uk/AppData/Local/Google/Picasa2/Contacts/contacts.xml
+  contact_nick_unique: true
+  config_file: /mnt/c/work/image/picasa/picasa.cfg
+  country_file: /mnt/c/work/hutelep/countries.utf8
+  city_file:
+    HU: /mnt/c/work/hutelep.picasa.utf8
+  state_map:
+    HU:
+      "1": "Bács-Kiskun megye"
+      "2": "Baranya megye"
+      "3": "Békés megye"
+      "4": "Borsod-Abaúj-Zemplén megye"
+      "5": "Csongrád megye"
+      "6": "Fejér megye"
+      "7": "Győr-Moson-Sopron megye"
+      "8": "Hajdú-Bihar megye"
+      "9": "Heves megye"
+      "10": "Jász-Nagykun-Szolnok megye"
+      "11": "Komárom-Esztergom megye"
+      "12": "Nógrád megye"
+      "13": "Pest megye"
+      "14": "Somogy megye"
+      "15": "Szabolcs-Szatmár-Bereg megye"
+      "16": "Tolna megye"
+      "17": "Vas megye"
+      "18": "Veszprém megye"
+      "19": "Zala megye"
