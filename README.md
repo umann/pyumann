@@ -125,7 +125,7 @@ Environment variables:
 User override file (if env var not set):
 - `~/.pyumann_config_override.yaml` — merged on top of base when present
 
-Merging behavior:
+Merging behaviour:
 - Dictionaries are deep-merged; other values are overridden by the override file.
 
 ## Development

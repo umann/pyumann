@@ -291,6 +291,27 @@ def test_needs_rebuild_geojson_file_newer(tmp_path):
     assert _needs_rebuild(pkl, geojson_dir, tz_json) is True
 
 
+def test_needs_rebuild_geojson_branch_reached(tmp_path):
+    # Ensure timezones.json is not newer than pickle so loop branch decides outcome
+    pkl = tmp_path / "index.pkl"
+    pkl.write_text("fake pickle")
+    geojson_dir = tmp_path / "geojson"
+    geojson_dir.mkdir()
+    tz_json = tmp_path / "timezones.json"
+    tz_json.write_text("{}")
+
+    # Make pickle newer than timezones.json first
+    time.sleep(0.01)
+    pkl.touch()
+
+    # Then create a newer geojson file that should trigger the loop condition
+    time.sleep(0.01)
+    geo_file = geojson_dir / "Europe-Paris-tz.json"
+    geo_file.write_text("{}")
+
+    assert _needs_rebuild(pkl, geojson_dir, tz_json) is True
+
+
 def test_expected_geojson_ids(tmp_path):
     # Test extraction of geojson IDs from timezones.json
     tz_json = tmp_path / "timezones.json"

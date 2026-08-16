@@ -3,11 +3,14 @@
 Tests the data manipulation functions like get_multi, set_multi, and pop_multi.
 """
 
+import re
 import unittest
 
 import pytest
 from parameterized import parameterized
 
+import umann.config as config_mod
+from umann.utils import data_utils as du
 from umann.utils.data_utils import NotSpecified, get_multi, listify, pop_multi, set_multi
 
 pytestmark = pytest.mark.unit
@@ -188,6 +191,163 @@ class TestDataUtils(unittest.TestCase):
             self.assertEqual(set(result), expected)
         else:
             self.assertEqual(result, expected)
+
+
+def test_listify_none_to_empty_list():
+    assert du.listify(None, none_to_empty_list=True) == []
+
+
+def test_pop_multi_list_items_and_empty_path_default():
+    data = {"a": [{"x": 1}, {"x": 2}]}
+    popped = du.pop_multi(data, "a.[].x", pop_list_items=True, default=None)
+    assert popped == [1, 2]
+    assert not data
+
+    assert du.pop_multi({"a": 1}, [], default="fallback") == "fallback"
+
+
+def test_pop_multi_leaf_missing_default_and_type_errors():
+    # Cover inner pop() KeyError fallback path
+    assert du.pop_multi({"a": {}}, "a.missing", default="dflt") == "dflt"
+
+    # Cover inner pop() KeyError raise path (default not provided)
+    with pytest.raises(KeyError):
+        du.pop_multi({"a": {}}, "a.missing")
+
+    # Cover TypeError wrapping branch for non-subscriptable intermediate value
+    with pytest.raises(TypeError):
+        du.pop_multi(1, "a.b")
+
+    # Leaf pop on non-mapping raises AttributeError
+    with pytest.raises(AttributeError):
+        du.pop_multi({"a": 1}, "a.b")
+
+    # Cover empty-path KeyError when no default is provided
+    with pytest.raises(KeyError):
+        du.pop_multi({"a": 1}, [])
+
+
+def test_recurse_variants_and_invalid_what():
+    assert du.recurse({1: 2}, str, ("key",)) == {"1": 2}
+    assert du.recurse([1, (2, 3), {4}], lambda x: x * 10) == [10, (20, 30), {40}]
+    assert du.recurse({1: 2}, str, ("key", "value")) == {"1": "2"}
+
+    with pytest.raises(AssertionError):
+        du.recurse({1: 2}, str, ("val",))
+
+
+def test_merge_struct_and_dict_only_keys():
+    left = {"a": {"x": 1}, "b": 2}
+    right = {"a": {"y": 3}, "b": {"z": 4}}
+    merged = du.merge_struct(left, right)
+    assert merged == {"a": {"x": 1, "y": 3}, "b": {"z": 4}}
+    assert left == {"a": {"x": 1}, "b": 2}
+
+    assert du.dict_only_keys({"a": 1, "b": 2}, ["a"]) == {"a": 1}
+    assert du.dict_only_keys({"a": 1, "b": 2}, ["a"], invert=True) == {"b": 2}
+    with pytest.raises(KeyError):
+        du.dict_only_keys({"a": 1}, ["a", "missing"], strict=True)
+
+
+def test_validate_and_split_dict_and_any_in():
+    assert du.validate("x", None)
+    assert du.validate("x", ["x", "y"])
+    assert du.validate("x", {"x": True})
+    assert du.validate("x", True)
+    assert not du.validate("x", False)
+    assert du.validate(5, 5)
+    assert du.validate("abc", re.compile("b"))
+    assert not du.validate("x", lambda _v: 1 / 0)
+    assert not du.validate("x", object())
+
+    t_part, f_part = du.split_dict({"a": 1, "b": 2}, re.compile(r"a"))
+    assert t_part == {"a": 1}
+    assert f_part == {"b": 2}
+
+    assert du.any_in(["foo", "bar"], "xxbarxx")
+    assert not du.any_in(["foo"], "baz")
+
+
+def test_on_error_and_iterable_helpers():
+    with pytest.raises(ValueError):
+        du.on_error(ValueError("boom"), "ignored")
+    with pytest.raises(RuntimeError):
+        du.on_error(RuntimeError, "msg")
+    assert du.on_error("fallback", "msg") == "fallback"
+
+    assert du.iterable_not_str([1, 2])
+    assert not du.iterable_not_str("abc")
+    assert du.uniq_keep_order([1, 2, 1, 3, 2]) == [1, 2, 3]
+
+
+def test_deep_split_and_map_recursive():
+    assert du.deep_split("apple, banana; cherry") == ["apple", "banana", "cherry"]
+    assert du.deep_split(["a, b", ["c;d", None, ""]]) == ["a", "b", "c", "d"]
+    assert du.deep_split("x  y", pattern=r"\s+", simplify=False) == ["x", "y"]
+
+    mapped = du.map_recursive({"a": [1, 2], "b": (3, {4})}, lambda x: x * 2)
+    assert mapped == {"a": [2, 4], "b": (6, {8})}
+
+
+def test_fix_iptc_encoding_and_locale_sorted(monkeypatch):
+    monkeypatch.setattr(du, "fix_str_encoding", lambda v, force_language=None: f"ok:{v}:{force_language}")
+    md = {"IPTC:Title": "abc", "XMP:Title": "keep"}
+    fixed = du.fix_iptc_encoding(md, force_language="hu")
+    assert fixed["IPTC:Title"] == "ok:abc:hu"
+    assert fixed["XMP:Title"] == "keep"
+    assert du.fix_iptc_encoding({"XMP:Title": "keep"}) == {"XMP:Title": "keep"}
+    assert du.fix_iptc_encoding("not-a-dict") == "not-a-dict"
+
+    monkeypatch.setattr(du, "get_collation_sort_key", lambda: (lambda s: s[::-1]))
+    assert du.locale_sorted(["ab", "aa", "ba"]) == ["aa", "ba", "ab"]
+
+
+def test_get_collation_sort_key_builds_from_icu(monkeypatch):
+    du.get_collation_sort_key.cache_clear()
+
+    class DummyLocale:  # pylint: disable=too-few-public-methods, missing-class-docstring
+        def __init__(self, value):
+            self.value = value
+
+    class DummyCollator:  # pylint: disable=too-few-public-methods, missing-class-docstring
+        @staticmethod
+        def createInstance(locale):  # pylint: disable=invalid-name  # icu
+            assert locale.value == "hu_HU"
+
+            class _Coll:  # pylint: disable=too-few-public-methods, missing-class-docstring
+                @staticmethod
+                def getSortKey(text):  # pylint: disable=invalid-name  # icu
+                    return text
+
+            return _Coll()
+
+    class DummyIcu:  # pylint: disable=too-few-public-methods, missing-class-docstring
+        Collator = DummyCollator
+        Locale = DummyLocale
+
+    monkeypatch.setattr(du, "icu", DummyIcu)
+    monkeypatch.setattr(config_mod, "get_config", lambda k: "hu" if k == "default_lang" else "HU")
+    key_fn = du.get_collation_sort_key()
+    assert key_fn("abc") == "abc"
+
+
+def test_flat_helpers_single_line_return_as_type_and_batch_iter():
+    assert du.flat1(["x", "y"]) == "x"
+    assert du.flat1([]) is None
+    assert du.flat_more(["a", "b"]) == "a, b"
+    assert du.flat_more([]) is None
+
+    txt = 'foo\n  bar  "keep   spaces"\n(baz\n)'
+    assert du.single_line(txt, keep_quoted_spaces=False) == 'foo bar "keep spaces" (baz)'
+    assert du.single_line(txt).startswith('foo bar "keep   spaces"')
+
+    assert du.return_as_type(["a", "b"], str) == "a\nb"
+    assert du.return_as_type("a\nb", list) == ["a", "b"]
+    assert du.return_as_type("x", str) == "x"
+    with pytest.raises(TypeError):
+        du.return_as_type(["a"], dict)
+
+    assert list(du.batch_iter(range(5), batch_size=2)) == [[0, 1], [2, 3], [4]]
 
 
 if __name__ == "__main__":

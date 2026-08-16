@@ -1,0 +1,32 @@
+/mnt/?/$Recycle.Bin/
+/mnt/?/Config.Msi/
+/mnt/?/Documents and Settings/
+/mnt/?/PerfLogs/
+/mnt/?/Program Files/
+/mnt/?/Program Files (x86)/
+/mnt/?/ProgramData/
+/mnt/?/Recovery/
+/mnt/?/System Volume Information/
+/mnt/?/Windows/
+/mnt/?/DumpStack.log.tmp
+/mnt/?/hiberfil.sys
+/mnt/?/pagefile.sys
+/mnt/?/swapfile.sys
+/mnt/?/.bzvol/
+/mnt/?/Users/All Users/
+/mnt/?/Users/Default/
+/mnt/?/Users/Default User/
+/mnt/?/Users/Public/
+/mnt/?/Users/*/.aws/
+/mnt/?/Users/*/.azure/
+/mnt/?/Users/*/.cache/
+/mnt/?/Users/*/.dbus-keyrings/
+/mnt/?/Users/*/.docker/
+/mnt/?/Users/*/.ms-ad/
+/mnt/?/Users/*/.pylint.d/
+/mnt/?/Users/*/.virtualenvs/
+/mnt/?/Users/*/.vscode/
+/mnt/?/Users/*/AppData/
+/mnt/?/Users/*/Muse Hub/
+/mnt/?/Users/*/ntuser.dat*
+/mnt/?/usr/local/cache/

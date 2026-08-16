@@ -3,13 +3,28 @@
 Tests the basic utility functions like project_root path resolution.
 """
 
+import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from umann.utils import fs_utils
-from umann.utils.fs_utils import md5_file, project_root, urealpath, urelpath, volume_convert
+from umann.utils.fs_utils import (
+    NotARegularFileError,
+    get_dry_dir_attrs,
+    get_dry_file_attrs,
+    get_file_attrs,
+    iter_files,
+    md5_file,
+    project_root,
+    read_file,
+    split_path,
+    urealpath,
+    urelpath,
+    volume_convert,
+)
 
 pytestmark = pytest.mark.unit  # Mark all tests in this module as unit tests
 
@@ -137,3 +152,71 @@ def test_urealpath_nonexistent_path():
     result = urealpath("/nonexistent/path/to/file.txt")
     assert isinstance(result, str)
     assert len(result) > 0
+
+
+def test_iter_files_parses_and_skips_invalid_rows(monkeypatch):
+    stdout = '"/home/user/a.jpg",10,1000.0\n' + '"/home/user/b.jpg",oops,1000.0\n' + '"/home/user/c.jpg",-1,-1.0\n'
+    monkeypatch.setattr(fs_utils, "project_root", lambda *_args, **_kwargs: "/tmp/iter_dir_to_csv")
+    monkeypatch.setattr(
+        fs_utils,
+        "get_file_attrs",
+        lambda *_args, **_kwargs: {"vol": "", "dir": "/home/user/", "bas": "a", "ext": ".jpg"},
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Mock(stdout=stdout))
+
+    rows = iter_files(["/home/user"], include_md5=True, fnmatch="*.jpg", gitignore="/tmp/.gitignore")
+    assert len(rows) == 1
+    assert rows[0].size == 10
+
+
+def test_iter_files_raises_on_subprocess_error(monkeypatch):
+    def _raise(*_args, **_kwargs):
+        raise subprocess.CalledProcessError(1, "iter_dir_to_csv", stderr="boom")
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+    with pytest.raises(subprocess.CalledProcessError):
+        iter_files(["/home/user"])
+
+
+def test_iter_files_raises_on_missing_executable(monkeypatch):
+    def _raise(*_args, **_kwargs):
+        raise FileNotFoundError("missing")
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+    with pytest.raises(FileNotFoundError):
+        iter_files(["/home/user"])
+
+
+def test_get_file_attrs_not_regular_file(tmp_path):
+    d = tmp_path / "folder"
+    d.mkdir()
+    with pytest.raises(NotARegularFileError):
+        get_file_attrs(str(d))
+
+
+def test_get_file_attrs_invalid_abs_path_raises():
+    with pytest.raises(ValueError):
+        get_file_attrs("", dry=True, is_abs=True)
+
+
+def test_split_path_list_input_and_invalid(monkeypatch):
+    values = split_path(["/tmp/a.txt", "/tmp/b.txt"])
+    assert len(values) == 2
+
+    monkeypatch.setattr(fs_utils, "urealpath", lambda *_args, **_kwargs: "")
+    with pytest.raises(ValueError):
+        split_path("/tmp/a.txt")
+
+
+def test_get_dry_attr_errors(monkeypatch):
+    monkeypatch.setattr(fs_utils, "urealpath", lambda *_args, **_kwargs: "")
+    with pytest.raises(ValueError):
+        get_dry_file_attrs("/tmp/a.txt")
+    with pytest.raises(ValueError):
+        get_dry_dir_attrs("/tmp")
+
+
+def test_read_file_reads_text(tmp_path):
+    f = tmp_path / "sample.txt"
+    f.write_text("hello", encoding="utf-8")
+    assert read_file(str(f)) == "hello"

@@ -7,10 +7,21 @@ particularly for handling dicts.
 import re
 import typing as t
 from collections.abc import Iterable
-from contextlib import suppress
 from copy import deepcopy
+from functools import lru_cache
+from itertools import islice
 
+import icu
 from deepmerge import Merger
+
+T_Predicate = t.Callable[[t.Hashable, t.Any], bool] | list | set | tuple | dict | re.Pattern
+
+"""
+Note: avoid top-level import of get_config to prevent circular import
+with config.py. Import it lazily inside functions that need it.
+"""
+# pylint: disable=wrong-import-position, import-outside-toplevel
+from umann.utils.encoding_utils import fix_str_encoding
 
 
 class NotSpecified:  # pylint: disable=too-few-public-methods
@@ -126,12 +137,14 @@ def pop_multi(
     return default
 
 
-def listify(data):
+def listify(data, none_to_empty_list: bool = False) -> list:
     """Ensure data is a list."""
     if isinstance(data, list):
         return data
     if isinstance(data, Iterable) and not isinstance(data, (str, bytes)):
         return list(data)
+    if data is None and none_to_empty_list:
+        return []
     return [data]
 
 
@@ -215,42 +228,33 @@ def dict_only_keys(dic: dict, keys: t.Any, strict: bool = False, invert: bool = 
 #     return dict_only_keys(dic, keys, strict, invert=True)
 
 
-def validate(value, predicate: t.Callable[[t.Hashable, t.Any], bool] | list | set | tuple | dict | re.Pattern) -> bool:
-    """Validate a value against a predicate.
-
-    Args:
-        value: The value to validate.
-        predicate: A function that takes a key and value and returns True or False,
-                   or a collection (list, set, tuple) to check membership,
-                   or a dict to check value,
-                   or a regex pattern to match strings.
-
-    Returns:
-        True if the value satisfies the predicate, False otherwise.
-    """
+def validate(value: t.Any, predicate: T_Predicate) -> bool:
+    """Validate a key/value pair against a predicate."""
 
     def _validate():  # pylint: disable=too-many-return-statements
-        with suppress(Exception):
-            if callable(predicate):
+        if predicate is None:
+            return True
+        if callable(predicate):
+            try:
                 return predicate(value)
-            if isinstance(predicate, (list, set, tuple)):
-                return value in predicate
-            if isinstance(predicate, dict):
-                return predicate.get(value)
-            if isinstance(predicate, bool):
-                return predicate
-            if isinstance(predicate, (str, int, float)):
-                return predicate == value
-            if isinstance(predicate, re.Pattern):
-                return bool(predicate.search(value))
+            except Exception:  # pylint: disable=broad-except
+                return False
+        if isinstance(predicate, (list, set, tuple)):
+            return value in predicate
+        if isinstance(predicate, dict):
+            return predicate.get(value)
+        if isinstance(predicate, bool):
+            return predicate
+        if isinstance(predicate, (str, int, float)):
+            return predicate == value
+        if isinstance(predicate, re.Pattern):
+            return predicate.search(str(value))
         return None
 
     return bool(_validate())
 
 
-def split_dict(
-    dic: dict, predicate: t.Callable[[t.Hashable, t.Any], bool] | list | set | tuple | dict | re.Pattern
-) -> tuple[dict, dict]:
+def split_dict(dic: dict, predicate: t.Callable[[tuple[t.Hashable, t.Any]], bool]) -> tuple[dict, dict]:
     """Split a dictionary into two based on a predicate.
 
     Args:
@@ -260,7 +264,214 @@ def split_dict(
     Returns:
         A tuple of two dictionaries: (dict_true, dict_false)
     """
-    res = {True: {}, False: {}}
+    collect = {True: {}, False: {}}
     for key, value in dic.items():
-        res[validate(value, predicate)][key] = value
-    return tuple(res.values())
+        verdict_bool_key = validate(key, predicate)
+        collect[verdict_bool_key][key] = value
+    return tuple(collect.values())
+
+
+def any_in(iterable: t.Iterable[str] | str, text: str) -> bool:
+    """Check if any of the substrings in iterable is present in text.
+    iterable: An iterable of substrings or a single string.
+    text: The text to search within.
+
+    >>> any_in(['foo', 'bar'], 'foobar')
+    True
+    >>> any_in(['baz', 'qux'], 'foobar')
+    False
+    >>> any_in('foo', 'foobar')
+    True
+    >>> any_in('baz', 'foobar')
+    False
+    """
+    return any(substring in text for substring in listify(iterable))
+
+
+def on_error(default: t.Any, msg) -> t.Any:
+    if isinstance(default, Exception):
+        raise default
+    if isinstance(default, type):
+        raise default(msg)
+    return default
+
+
+def iterable_not_str(data: t.Any) -> bool:
+    """Check if data is an iterable but not a string or bytes."""
+    return isinstance(data, Iterable) and not isinstance(data, (str, bytes))
+
+
+def uniq_keep_order(seq: t.Iterable[t.Hashable]) -> list[t.Hashable]:
+    """Return a list of unique items from seq, preserving the original order."""
+    seen = set()
+    uniq = []
+    for item in seq:
+        if item not in seen:
+            seen.add(item)
+            uniq.append(item)
+    return uniq
+
+
+def deep_split(data: t.Any, pattern: str = r"\s*[,;]\s*", simplify: bool = True) -> list[str]:
+    r"""_summary_
+
+    :param t.Any data: _description_
+    :param str pattern: _description_, defaults to r"\s*[,;]\s*"
+    :param bool simplify: _description_, defaults to True
+    :return list[str]: _description_
+
+    >>> split_recursive("apple, banana; cherry")
+    ['apple', 'banana', 'cherry']
+    >>> split_recursive(["apple, banana", "cherry; date"])
+    ['apple', 'banana', 'cherry', 'date']
+    >>> split_recursive([["apple, banana"], ["cherry; date"]])
+    ['apple', 'banana', 'cherry', 'date']
+    >>> split_recursive(None)
+    []
+    >>> split_recursive([[[[["apple, banana"]]]], ["", None""])
+    ['apple', 'banana']
+    """
+
+    def _split_recursive(data_: t.Any) -> list[str]:
+        if data_ is None:
+            return []
+        if iterable_not_str(data_):
+            ret = []
+            for item in data_:
+                ret.extend(_split_recursive(item))
+            return ret
+        return re.split(pattern, str(data_))
+
+    splitted = _split_recursive(data)
+    if simplify:
+        splitted = uniq_keep_order(re.sub(r"\s+", " ", item).strip() for item in splitted)
+
+    return [item for item in splitted if item != ""]
+
+
+def map_recursive(data: t.Any, func: t.Callable[[t.Any], t.Any]) -> t.Any:
+    """Recursively apply func to all non-iterable, non-string values in data."""
+    typ = type(data)
+    if isinstance(data, dict):
+        return typ({k: map_recursive(v, func) for k, v in data.items()})
+    if isinstance(data, (list, tuple, set)):
+        return typ(map_recursive(item, func) for item in data)
+    return func(data)
+
+
+def fix_iptc_encoding(metadata: dict[str, t.Any], force_language: str | None = None) -> dict[str, t.Any]:
+    """Fix IPTC encoding issues in metadata dictionary.
+    Applies fix_iptc_encoding to all IPTC and MWG string fields.
+    """
+    if not isinstance(metadata, dict):
+        return metadata
+
+    iptc, non_iptc = split_dict(metadata, lambda key: key.startswith("IPTC:"))
+    if not iptc:
+        return metadata
+
+    def func(value):
+        return fix_str_encoding(value, force_language=force_language)
+
+    return map_recursive(iptc, func) | non_iptc
+
+
+@lru_cache
+def get_collation_sort_key():
+    from umann.config import get_config
+
+    collator_class = getattr(icu, "Collator")
+    locale_class = getattr(icu, "Locale")
+    coll = collator_class.createInstance(locale_class(f"{get_config('default_lang')}_{get_config('default_country')}"))
+    return coll.getSortKey
+
+
+def locale_sorted(iterable: Iterable[str]) -> list[str]:
+    return sorted(iterable, key=get_collation_sort_key())
+
+
+# def any_in(items: t.Iterable[t.Any], container: t.Container[t.Any]) -> bool:
+#     """Check if any item from items is in the container.
+
+#     Args:
+#         items: An iterable of items to check.
+#         container: A container (like list, set, dict keys) to check against.
+#     """
+#     return any(item in container for item in items)
+
+
+def flat1(data) -> str | None:
+    if isinstance(data, (list, tuple)):
+        data = data[0] if data else None
+    return data
+
+
+def flat_more(data) -> str | None:
+    if isinstance(data, (list, tuple)):
+        data = ", ".join(data) if data else None
+    return data
+
+
+def single_line(text: str, keep_quoted_spaces: bool = True) -> str:
+    """Convert multi-line text to a single line by replacing newlines with spaces."""
+    ret = text
+    ret = re.sub(r"([(\{\[])\s*\n\s*", r"\1", ret)
+    ret = re.sub(r"\s*\n\s*([)\}\]])", r"\1", ret)
+
+    if not keep_quoted_spaces:
+        return re.sub(r"\s+", " ", ret).strip()
+
+    # Replace multiple whitespaces with single space, but preserve content in quotes
+    def replacer(match):
+        matched = match.group(0)
+        # If it's a quoted string, return as-is
+        if matched[0] in ('"', "'"):
+            return matched
+        # Otherwise, it's whitespace - compress to single space
+        return " "
+
+    # Match either quoted strings (with escaped quotes) or whitespace sequences
+    ret = re.sub(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|\s+', replacer, ret)
+    return ret.strip()
+
+
+def return_as_type(data: str | list[str], return_type: t.Type) -> str | list[str] | dict:
+    """Convert data to the specified return type.
+
+    Args:
+        data: The input data to convert.
+        return_type: The desired return type (e.g., str, list, dict).
+        flatten: If True and return_type is str, flatten lists/tuples to single string.
+
+    Returns:
+        The data converted to the specified return type.
+    """
+    if isinstance(data, return_type):
+        return data
+    if return_type == str and isinstance(data, list):
+        return "\n".join(data)
+    if return_type == list and isinstance(data, str):
+        return data.splitlines()
+    raise TypeError(f"Cannot return {type(data)} as {return_type}")
+
+
+def batch_iter(iterable: t.Iterable[t.Any], batch_size: int = 1000) -> t.Iterator[list[t.Any]]:
+    """Yield batches of items from iterable.
+
+    Args:
+        iterable: Input iterable to batch
+        batch_size: Number of elements per batch (default: 1000)
+
+    Yields:
+        Lists of up to batch_size elements
+    """
+    iterator = iter(iterable)
+    while True:
+        batch = list(islice(iterator, batch_size))
+        if not batch:
+            break
+        yield batch
+
+
+if __name__ == "__main__":
+    print(deep_split(["boci,maci"]))

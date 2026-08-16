@@ -6,7 +6,7 @@ This excludes MOV metadata and container structure.
 MOV files use the same ISO base media format as MP4.
 """
 
-from umann.digest.soul import Soul
+from umann.utils.digest.soul import Soul
 
 from ._isobmff import IsoBmffPluginBase
 
@@ -14,13 +14,11 @@ from ._isobmff import IsoBmffPluginBase
 class MOVPlugin(IsoBmffPluginBase):
     """Extract soul from MOV (QuickTime) files."""
 
+    SUPPORTED_EXTENSIONS = {".mov", ".qt"}
+
     @classmethod
-    def can_handle(cls, soul: Soul) -> bool:
+    def can_handle_content(cls, soul: Soul) -> bool:
         """Check if file is MOV/QuickTime."""
-        if soul.file:
-            suffix = soul.file.suffix.lower()
-            if suffix in (".mov", ".qt"):
-                return True
 
         # Check for QuickTime-specific ftyp brands or moov/mdat atoms
         if soul.size >= 8:

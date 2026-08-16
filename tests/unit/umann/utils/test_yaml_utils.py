@@ -4,12 +4,13 @@ import datetime as dt
 import io
 import unittest
 from collections import defaultdict
+from pathlib import Path
 
 import pytest
 import yaml
 from munch import Munch
 
-from umann.utils.yaml_utils import yaml_dump_cozy
+from umann.utils.yaml_utils import stringify_dt, yaml_dump_cozy, yaml_safe_load_file
 
 pytestmark = pytest.mark.unit
 
@@ -224,3 +225,32 @@ class TestYamlDumpCozy(unittest.TestCase):
         self.assertIsInstance(loaded["nested"]["level1"], dict)
         self.assertEqual(loaded["nested"]["level1"]["count"], 42)
         self.assertEqual(loaded["nested"]["level1"]["total"], 100)
+
+
+def test_yaml_dump_cozy_time_and_exif_date_formatting():
+    data = {
+        "date": dt.date(2025, 11, 1),
+        "time": dt.time(14, 30, 45),
+    }
+    result = yaml_dump_cozy(data, exif_compatible=True, default_flow_style=False)
+    assert "2025:11:01" in result
+    assert "14:30:45" in result
+
+
+def test_stringify_dt_unsupported_type_raises():
+    with pytest.raises(TypeError):
+        stringify_dt("2025-11-01")
+
+
+def test_yaml_safe_load_file_default_and_error(tmp_path):
+    missing = tmp_path / "missing.yaml"
+    assert yaml_safe_load_file(str(missing), default={"fallback": True}) == {"fallback": True}
+
+    with pytest.raises(RuntimeError):
+        yaml_safe_load_file(str(missing))
+
+
+def test_yaml_safe_load_file_success(tmp_path):
+    fname = Path(tmp_path) / "ok.yaml"
+    fname.write_text("a: 1\n", encoding="utf-8")
+    assert yaml_safe_load_file(str(fname)) == {"a": 1}

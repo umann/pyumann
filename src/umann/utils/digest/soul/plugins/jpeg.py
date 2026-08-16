@@ -7,11 +7,13 @@ JPEG soul is the compressed image data between:
 This excludes EXIF, JFIF headers, and other metadata.
 """
 
-from umann.digest.soul import Soul, SoulError, SoulPlugin
+from umann.utils.digest.soul import Soul, SoulError, SoulPlugin
 
 
 class JPEGPlugin(SoulPlugin):
     """Extract soul from JPEG files."""
+
+    SUPPORTED_EXTENSIONS = {".jpg", ".jpeg"}
 
     # JPEG markers
     SOI = b"\xff\xd8"  # Start of Image
@@ -24,10 +26,8 @@ class JPEGPlugin(SoulPlugin):
     MAX_ITERATIONS = 1000
 
     @classmethod
-    def can_handle(cls, soul: Soul) -> bool:
+    def can_handle_content(cls, soul: Soul) -> bool:
         """Check if file is JPEG."""
-        if soul.file:
-            return soul.file.suffix.lower() in (".jpg", ".jpeg")
         # Check magic bytes
         return soul.content[:2] == cls.SOI
 

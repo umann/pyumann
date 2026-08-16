@@ -6,16 +6,17 @@ This excludes AVI headers and metadata.
 
 import struct
 
-from umann.digest.soul import Soul, SoulError, SoulPlugin
+from umann.utils.digest.soul import Soul, SoulError, SoulPlugin
 
 
 class AVIPlugin(SoulPlugin):
     """Extract soul from AVI files."""
 
+    SUPPORTED_EXTENSIONS = {".avi"}
     RIFF_HEADER_SIZE = 12
 
     @classmethod
-    def can_handle(cls, soul: Soul) -> bool:
+    def can_handle_content(cls, soul: Soul) -> bool:
         """Check if file is AVI."""
         if soul.file:
             return soul.file.suffix.lower() == ".avi"

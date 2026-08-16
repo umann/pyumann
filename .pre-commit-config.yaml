@@ -36,6 +36,13 @@ repos:
         language: system
         types: [python]
         require_serial: true
+      - id: vulture
+        name: vulture
+        entry: .venv/bin/python -m umann.utils.vulture_wrapper
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
       - id: check-clean-tree
         name: check git tree is clean
         entry: bash

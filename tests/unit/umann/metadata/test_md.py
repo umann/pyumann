@@ -1,23 +1,21 @@
-"""Unit tests for the ExifTool metadata module.
+"""Unit tests for the md CLI module."""
 
-These tests verify the behavior of the md module using mocks to isolate
-the tests from actual ExifTool operations and file system interactions.
-"""
-
+import runpy
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
-from munch import munchify
+from click.testing import CliRunner
 
 from umann.metadata import md
-from umann.utils.fs_utils import project_root
+from umann.metadata.chk_tz import TzMismatchError
+from umann.utils.digest.soul import SoulError
 
 pytestmark = pytest.mark.unit
 
 
-class TestEt(unittest.TestCase):
-    """Test suite for the md module."""
+class TestMd(unittest.TestCase):
+    """Test suite for md CLI behavior."""
 
     def setUp(self):
         """Set up test fixtures."""
@@ -29,22 +27,16 @@ class TestEt(unittest.TestCase):
         """Clean up test fixtures."""
         self.patcher.stop()
 
-    def test_default_config(self):
-        """Test default configuration values."""
-        config = md.default()
-        self.assertEqual(config["common_args"], ["-struct", "-G1"])
-        self.assertEqual(config["config_file"], project_root(".ExifTool_config"))
+    # @pytest.mark.skip(reason="Disabled due to introducing memoize - it cannot handle single file now")
+    # def test_get_metadata_single(self):
+    #     test_file = "test.jpg"
+    #     expected = {"EXIF:Make": "TestCamera"}
+    #     self.mock_exiftool.get_metadata.return_value = [expected]  # ExifTool returns list even for single file
 
-    @pytest.mark.skip(reason="Disabled due to introducing memoize - it cannot handle single file now")
-    def test_get_metadata_single(self):
-        test_file = "test.jpg"
-        expected = {"EXIF:Make": "TestCamera"}
-        self.mock_exiftool.get_metadata.return_value = [expected]  # ExifTool returns list even for single file
+    #     result = md.get_metadata(test_file)
 
-        result = md.get_metadata(test_file)
-
-        self.mock_exiftool.get_metadata.assert_called_once_with(test_file)
-        self.assertEqual(result, expected)
+    #     self.mock_exiftool.get_metadata.assert_called_once_with(test_file)
+    #     self.assertEqual(result, expected)
 
     @pytest.mark.skip(reason="Disabled due to introducing memoize - it cannot handle multiple files now")
     def test_get_metadata_multi(self):
@@ -58,38 +50,13 @@ class TestEt(unittest.TestCase):
         self.mock_exiftool.get_metadata.assert_called_once_with(test_files)
         self.assertEqual(result, dict(zip(test_files, expected)))
 
-    def test_cool_in_gps(self):
-        """Test GPS coordinate transformation."""
-        tags = {"Composite:GPSPosition": "40.7128, -74.0060", "EXIF:GPSPosition": "51.5074, -0.1278"}
-
-        result = md.cool_in(tags)
-
-        # Check Composite GPS transformation
-        self.assertNotIn("Composite:GPSPosition", result)
-        self.assertEqual(result["Composite:GPSLatitude"], 40.7128)
-        self.assertEqual(result["Composite:GPSLongitude"], -74.0060)
-
-        # Check EXIF GPS transformation
-        self.assertNotIn("EXIF:GPSPosition", result)
-        self.assertEqual(result["EXIF:GPSLatitude"], 51.5074)
-        self.assertEqual(result["EXIF:GPSLongitude"], -0.1278)
-
-    def test_cool_in_keywords(self):
-        """Test keywords transformation."""
-        tags = {"XMP:Subject": "tag1, tag2", "IPTC:Keywords": "tag3;tag4", "Composite:Keywords": "tag5, tag6; tag7"}
-
-        result = md.cool_in(tags)
-
-        self.assertEqual(result["XMP:Subject"], ["tag1", "tag2"])
-        self.assertEqual(result["IPTC:Keywords"], ["tag3", "tag4"])
-        self.assertEqual(result["Composite:Keywords"], ["tag5", "tag6", "tag7"])
-
     def test_set_metadata_single(self):
         """Test setting metadata for a single file."""
         test_file = "test.jpg"
         tags = {"IPTC:Keywords": ["tag1", "tag2"]}
 
-        md.set_metadata(test_file, tags)
+        with patch("umann.metadata.et.get_metadata", return_value={}):
+            md.set_metadata(test_file, tags)
 
         self.mock_exiftool.set_tags.assert_called_once_with(test_file, tags)
 
@@ -98,17 +65,21 @@ class TestEt(unittest.TestCase):
         test_files = ["test1.jpg", "test2.jpg"]
         tags = {"IPTC:Keywords": ["tag1", "tag2"]}
 
-        md.set_metadata(test_files, tags)
+        with patch("umann.metadata.et.get_metadata", return_value={}):
+            md.set_metadata(test_files, tags)
 
-        self.mock_exiftool.set_tags.assert_called_once_with(test_files, tags)
+        self.assertEqual(self.mock_exiftool.set_tags.call_count, 2)
+        self.assertEqual(
+            self.mock_exiftool.set_tags.call_args_list, [call("test1.jpg", tags), call("test2.jpg", tags)]
+        )
 
     def test_cli_main(self):
         """Test CLI interface with subcommands."""
         # Test get command
-        self.mock_exiftool.get_metadata.return_value = [{"EXIF:Make": "TestCamera"}]
+        md_map = {"test.jpg": {"EXIF:Make": "TestCamera"}}
 
         with patch("sys.argv", ["md", "get", "test.jpg"]):
-            with patch("umann.metadata.md.get_file_rec", return_value={"EXIF:Make": "TestCamera"}):
+            with patch("umann.metadata.md.get_metadata_multi", return_value=md_map):
                 with patch("builtins.print") as mock_print:
                     try:
                         md.main()
@@ -119,10 +90,10 @@ class TestEt(unittest.TestCase):
                     self.assertIn("EXIF:Make: TestCamera", printed_output)
 
         # Test get with --dictify
-        self.mock_exiftool.get_metadata.return_value = [{"EXIF:Make": "TestCamera"}]
+        md_map = {"test.jpg": {"EXIF:Make": "TestCamera"}}
 
         with patch("sys.argv", ["md", "get", "--dictify", "test.jpg"]):
-            with patch("umann.metadata.md.get_file_rec", return_value={"EXIF:Make": "TestCamera"}):
+            with patch("umann.metadata.md.get_metadata_multi", return_value=md_map):
                 with patch("builtins.print") as mock_print:
                     try:
                         md.main()
@@ -136,84 +107,109 @@ class TestEt(unittest.TestCase):
         self.mock_exiftool.set_tags.return_value = None
 
         with patch("sys.argv", ["md", "set", "--tags", '{"IPTC:Keywords": "tag1, tag2"}', "test.jpg"]):
-            with patch("umann.metadata.md.get_file_rec", return_value={}):
-                try:
+            with patch("umann.metadata.md.glob.glob", return_value=["test.jpg"]):
+                with patch("umann.metadata.md.set_metadata") as mock_set_metadata:
+                    try:
+                        md.main()
+                    except SystemExit:
+                        pass
+                    mock_set_metadata.assert_called_once_with(["test.jpg"], {"IPTC:Keywords": "tag1, tag2"})
+
+    def test_cli_get_all_transform(self):
+        runner = CliRunner()
+        md_map = {"test.jpg": {"EXIF:Make": "TestCamera"}}
+        with patch("umann.metadata.md.get_metadata_multi", return_value=md_map) as mock_get:
+            result = runner.invoke(md.cli, ["get", "--transform", "ALL", "test.jpg"])
+
+        self.assertEqual(result.exit_code, 0)
+        expected = tuple(md.TRANSFORMATORS)
+        self.assertEqual(mock_get.call_args.kwargs["transformations"], expected)
+
+    def test_cli_get_quiet_suppresses_print(self):
+        runner = CliRunner()
+        with patch("umann.metadata.md.get_metadata_multi", return_value={"test.jpg": {}}):
+            result = runner.invoke(md.cli, ["get", "--quiet", "test.jpg"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.output, "")
+
+    def test_cli_set_without_transform(self):
+        runner = CliRunner()
+        with patch("umann.metadata.md.glob.glob", return_value=["test.jpg"]):
+            with patch("umann.metadata.md.set_metadata") as mock_set_metadata:
+                result = runner.invoke(md.cli, ["set", "--tags", '{"IPTC:Keywords": "tag1"}', "test.jpg"])
+        self.assertEqual(result.exit_code, 0)
+        mock_set_metadata.assert_called_once_with(["test.jpg"], {"IPTC:Keywords": "tag1"})
+
+    def test_cleanup_callback_branches(self):
+        with patch("umann.metadata.md.glob.glob", return_value=["test.jpg"]):
+            with patch("umann.metadata.md.get_metadata_multi", return_value={"test.jpg": {}}) as mock_get:
+                with patch("builtins.print") as mock_print:
+                    md.cli_command_cleanup.callback(
+                        fnames=("*.jpg",),
+                        transformations=("ALL",),
+                        fix_iptc_encoding=False,
+                        quiet=False,
+                    )
+        self.assertTrue(mock_print.called)
+        expected = tuple(md.TRANSFORMATORS)
+        self.assertEqual(mock_get.call_args.kwargs["transformations"], expected)
+
+    def test_chk_command_emits_error_and_exits(self):
+        runner = CliRunner()
+        with patch("umann.metadata.md.glob.glob", return_value=["test.jpg", "test.txt"]):
+            with patch("umann.metadata.md.get_metadata_multi", return_value={"test.jpg": {}}):
+                with patch("umann.metadata.md.check_datetime_consistency", return_value={}):
+                    with patch(
+                        "umann.metadata.md._chk_tz.check_timezone_consistency",
+                        side_effect=TzMismatchError("mismatch"),
+                    ):
+                        result = runner.invoke(md.cli, ["chk", "test.jpg"])
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("TzMismatchError", result.output)
+
+    def test_chk_command_no_tz_data_error_passes(self):
+        runner = CliRunner()
+        with patch("umann.metadata.md.glob.glob", return_value=["test.jpg"]):
+            with patch("umann.metadata.md.get_metadata_multi", return_value={"test.jpg": {}}):
+                with patch("umann.metadata.md.check_datetime_consistency", return_value={}):
+                    with patch(
+                        "umann.metadata.md._chk_tz.check_timezone_consistency",
+                        side_effect=md.NoGpsError("no gps"),
+                    ):
+                        result = runner.invoke(md.cli, ["chk", "--geotz", "test.jpg"])
+        self.assertEqual(result.exit_code, 0)
+
+    def test_soul_command_outputs_all_cases(self):
+        runner = CliRunner()
+        with patch("umann.metadata.md.glob.glob", side_effect=[["a.jpg"], [], ["c.jpg"]]):
+            with patch("umann.metadata.md.extract_soul", side_effect=[None, "abcd", SoulError("boom")]):
+                result = runner.invoke(md.cli, ["soul", "a.jpg", "b.jpg", "c.jpg"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("________________________________  a.jpg", result.output)
+        self.assertIn("abcd  b.jpg", result.output)
+        self.assertIn("ERR:boom", result.output)
+
+    def test_main_inserts_default_get(self):
+        with patch("sys.argv", ["md", "test.jpg"]):
+            with patch.dict("os.environ", {}, clear=True):
+                with patch("umann.metadata.md.cli") as mock_cli:
                     md.main()
-                except SystemExit:
-                    pass
-                self.mock_exiftool.set_tags.assert_called()
+                    mock_cli.assert_called_once()
+                    self.assertEqual(md.sys.argv[1], "get")
 
-    def test_transform_metadata(self):
-        """Test transform_metadata function."""
-        metadata = {
-            "Composite:GPSPosition": "47.5, 19.0",  # Comma or semicolon separated
-            "IPTC:Keywords": "tag1, tag2",
-        }
+    def test_main_skips_insert_for_completion(self):
+        with patch("sys.argv", ["md", "test.jpg"]):
+            with patch.dict("os.environ", {"_MD_COMPLETE": "1"}, clear=True):
+                with patch("umann.metadata.md.cli") as mock_cli:
+                    md.main()
+                    mock_cli.assert_called_once()
+                    self.assertEqual(md.sys.argv[1], "test.jpg")
 
-        # Test with cool_in transformation
-        result = md.transform_metadata(metadata.copy(), transformations=["cool_in"])
-        self.assertIn("Composite:GPSLatitude", result)
-        self.assertIn("Composite:GPSLongitude", result)
-        self.assertEqual(result["Composite:GPSLatitude"], 47.5)
-        self.assertEqual(result["Composite:GPSLongitude"], 19.0)
-
-    def test_check_metadata_consistency(self):
-        """Test check function for metadata consistency."""
-        # Mock the metadata_tags.yaml to have _eq groups
-        with patch("umann.metadata.md.read_metadata_yaml") as mock_yaml:
-            mock_yaml.return_value = munchify({"_eq": [["field1", "field2"]]})
-
-            # Test with consistent fields
-            metadata = {"field1": "value", "field2": "value"}
-            result = md.check(metadata)
-            self.assertEqual(result, metadata)
-
-            # Test with inconsistent fields
-            metadata_bad = {"field1": "value1", "field2": "value2"}
-            with self.assertRaises(ValueError):
-                md.check(metadata_bad)
-
-    def test_read_metadata_yaml(self):
-        """Test that read_metadata_yaml loads the config file."""
-        result = md.read_metadata_yaml()
-        # Result should be a Munch object
-        self.assertIsNotNone(result)
-
-    def test_cool_out_transformations(self):
-        """Test cool_out transformation function."""
-        with patch("umann.metadata.md.read_metadata_yaml") as mock_yaml:
-            mock_yaml.return_value = munchify(
-                {
-                    "_type": {"int": ["field1", "list_path.[].a"], "float": ["field2", "list_path.[].c"]},
-                    "_convert": {"x_separated": ["size"], "flatten_if_not_multiple": ["single_item"]},
-                }
-            )
-
-            metadata = {
-                "field1": "42",
-                "field2": "3.14",
-                "size": "1920 1080",
-                "single_item": ["only_one"],
-                "list_path": [{"a": "1", "b": "b"}, {"c": "3.14"}],
-            }
-
-            result = md.cool_out(metadata)
-            self.assertEqual(result["field1"], 42)
-            self.assertEqual(result["field2"], 3.14)
-            self.assertEqual(result["size"], "1920x1080")
-            self.assertEqual(result["single_item"], "only_one")
-            self.assertEqual(result["list_path"], [{"a": 1, "b": "b"}, {"c": 3.14}])
-
-    def test_simple_out_transformations(self):
-        """Test simple_out transformation function."""
-        with patch("umann.metadata.md.read_metadata_yaml") as mock_yaml:
-            mock_yaml.return_value = {"_del": {"unwanted.field": None}}
-
-            metadata = {"wanted": "keep", "unwanted": {"field": "remove"}}
-
-            result = md.simple_out(metadata)
-            self.assertIn("wanted", result)
-            # The field should be removed or empty
+    def test_module_main_entrypoint(self):
+        with patch("sys.argv", ["md", "--help"]):
+            with patch.dict("os.environ", {}, clear=True):
+                with pytest.raises(SystemExit):
+                    runpy.run_module("umann.metadata.md", run_name="__main__")
 
 
 if __name__ == "__main__":

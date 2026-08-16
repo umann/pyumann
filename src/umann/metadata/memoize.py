@@ -1,405 +1,275 @@
+# pylint: disable=too-many-lines
 """Module to persistently memoize file metadata using an SQLite database."""
 
+import importlib
 import json
 import os
 import re
 import sqlite3
-import stat
-import string
 import sys
 import typing as t
-from contextlib import contextmanager, suppress
-from functools import lru_cache
+from pathlib import Path
 
-from munch import DefaultMunch, Munch
+import yaml
+from munch import Munch
 
 from umann.config import get_config
-from umann.digest import extract_soul
-from umann.utils.data_utils import dict_only_keys, get_multi, split_dict
-from umann.utils.fs_utils import SLASHB, md5_file, urealpath, vol_type
+from umann.platform import vol_type
+from umann.utils.data_utils import (
+    batch_iter,
+    deep_split,
+    dict_only_keys,
+    flat1,
+    flat_more,
+    get_multi,
+    locale_sorted,
+    split_dict,
+    uniq_keep_order,
+)
+from umann.utils.db_utils import (
+    db_conn,
+    delete1,
+    execute,
+    get_id,
+    get_id_cached,
+    insert,
+    insert1,
+    insert_ignore_cached,
+    transaction,
+    upsert1,
+)
+from umann.utils.digest import extract_soul
+from umann.utils.fs_utils import iter_files, project_root
+from umann.utils.log_utils import setup_package_logger
+from umann.utils.sql_utils import glob_to_where
 
+# DB_VERSION = 5
 
-class NotARegularFileError(OSError):
-    """Exception raised when a given path is not a regular file."""
+_logger = setup_package_logger()
+
+# Use transaction as get_cursor for backward compatibility
+get_cursor = transaction
 
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
-PATH_RE0 = r"(?=/)(?P<dir>.*/)(?P<bas>[^/]+?)(?P<ext>(?:[.][^./]*)?)"
-FULLPATH_PATTERN = dict(
-    win=re.compile(rf"^(?P<vol>[A-Z]:){PATH_RE0}$"),
-    unx=re.compile(rf"^(?P<vol>(?:/mnt/[a-z])?){PATH_RE0}$"),
-)[vol_type()]
+
+# from umann.utils.db_utils import transaction as get_cursor
 
 
-@lru_cache
-def db_conn():
-    def munch_factory(cursor: sqlite3.Cursor, row: t.Sequence[t.Any]) -> Munch:
-        return Munch({col[0]: row[i] for i, col in enumerate(cursor.description)})
+def get_file_rec_multi(
+    wildcards: t.Iterable[str],
+    /,
+    *,
+    func: t.Callable[[str], dict[str, t.Any]] = lambda f: {},
+    cmd: str = "",
+    # strict: bool = False,
+    with_cleanup: bool = True,
+) -> dict[str, Munch]:
 
-    connection = sqlite3.connect(get_config("memoize.db.path"))
-    connection.row_factory = munch_factory
-    # Access the attribute to satisfy static analysis (vulture) – sqlite3 uses it implicitly.
-    _ = connection.row_factory  # noqa: F841
-    return connection
+    with get_cursor(db_conn()) as cursor:
+        cursor.execute("DROP TABLE IF EXISTS _import")
+        cursor.execute(
+            """CREATE TEMPORARY TABLE _import(
+            vol TEXT NOT NULL,
+            dir TEXT NOT NULL,
+            bas TEXT,
+            ext TEXT,
+            vol_id INTEGER,
+            dir_id INTEGER,
+            bas_id INTEGER,
+            ext_id INTEGER,
+            size INTEGER,
+            mtime REAL,
+            done INTEGER NOT NULL DEFAULT 0
+        )"""
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS temp._import_ids ON _import (vol_id, dir_id, bas_id, ext_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS temp._import_done ON _import (done)")
 
+        cmd_id = get_id(cursor, "cmd", dict(cmd=cmd))
 
-@contextmanager
-def get_cursor() -> t.Generator[sqlite3.Cursor, None, None]:
-    """Yield a cursor wrapped in a transaction.
-
-    - Commits when the with-block exits cleanly
-    - Rolls back if an exception escapes the with-block
-    - Always closes the cursor
-    """
-    connection = db_conn()
-    cur = connection.cursor()
-    try:
-        yield cur
-    except sqlite3.Error:
-        # Ensure we don't persist partial writes on error
-        connection.rollback()
-        raise
-    else:
-        connection.commit()
-    finally:
-        try:
-            cur.close()
-        except sqlite3.Error:
-            pass
-
-
-# def single_line(string: str) -> str:
-#     return re.sub(r" */[*].*?[*]/ *", " ", " ".join(string.split()).replace("( ", "(").replace(" )", ")"))
-
-
-def trigger_on_chk_ts(table: str) -> str:
-    return f"""\
-
-CREATE TRIGGER IF NOT EXISTS {table}_after_insert_set_chk_ts
-AFTER INSERT ON {table}
-FOR EACH ROW
-BEGIN
-UPDATE {table} SET chk_ts = unixepoch('subsec') WHERE id = NEW.id;
-END;
-
-CREATE TRIGGER IF NOT EXISTS {table}_after_update_chk_ts
-AFTER UPDATE ON {table}
-FOR EACH ROW
-WHEN NEW.chk_ts = OLD.chk_ts
-BEGIN
-    UPDATE {table} SET
-        chk_ts = unixepoch()
-    WHERE id = NEW.id;
-END;"""
-
-
-def init():
-    sqls_str = rf"""
-PRAGMA foreign_keys=ON;
-PRAGMA journal_mode=MEMORY;
-PRAGMA temp_store=MEMORY;
-
-/* Command: CLI with args before file name like exiftool -struct -G1 */
-CREATE TABLE IF NOT EXISTS `cmd` (
-    `id`  INTEGER PRIMARY KEY NOT NULL,
-    `cmd` TEXT UNIQUE NOT NULL,
-    CHECK (LENGTH(`cmd`) > 0)
-);
-
-/* Volume: mount point (unx) or drive (win) */
-CREATE TABLE IF NOT EXISTS `vol` (
-    `id`  INTEGER PRIMARY KEY NOT NULL,
-    `unx` TEXT DEFAULT NULL,  -- e.g. /mnt/c (under Unix)
-    `win` TEXT DEFAULT NULL,  -- e.g. C: (under Windows)
-    CHECK (unx IS NOT NULL OR win IS NOT NULL)
-    UNIQUE(unx),
-    UNIQUE(win)
-);
-
--- /* Auto-fill missing unx/win on insert */
--- CREATE TRIGGER IF NOT EXISTS vol_before_insert_autofill
--- AFTER INSERT ON vol
--- FOR EACH ROW
--- WHEN NEW.unx IS NULL OR NEW.win IS NULL
--- BEGIN
---     UPDATE vol SET
---         unx = CASE
---             WHEN NEW.unx IS NULL AND NEW.win GLOB '[A-Z]:' THEN '/mnt/' || LOWER(SUBSTR(NEW.win, 1, 1))
---             ELSE NEW.unx
---         END,
---         win = CASE
---             WHEN NEW.win IS NULL AND NEW.unx GLOB '/mnt/[a-z]' THEN UPPER(SUBSTR(NEW.unx, 6, 1)) || ':'
---             ELSE NEW.win
---         END
---     WHERE id = NEW.id;
--- END;
-
-/* Directory: must start with / and end with / . Might be a single / */
-CREATE TABLE IF NOT EXISTS `dir` (
-    `id` INTEGER PRIMARY KEY NOT NULL,
-    `dir`    TEXT UNIQUE NOT NULL,
-    CHECK (LENGTH(`dir`) > 0 AND `dir` LIKE '/%'  AND `dir` LIKE '%/' AND `dir` NOT LIKE '%{SLASHB}%')
-);
-
-/* basename without dir and ext >might be empty for e.g. .gitignore */
-CREATE TABLE IF NOT EXISTS `bas` (
-    `id`  INTEGER PRIMARY KEY NOT NULL,
-    `bas` TEXT UNIQUE NOT NULL,
-    CHECK (`bas` NOT GLOB '*[/{SLASHB}]*')
-);
-
-/* extension including dot, or empty string for no extension */
-CREATE TABLE IF NOT EXISTS `ext` (
-    `id`  INTEGER PRIMARY KEY NOT NULL,
-    `ext` TEXT UNIQUE NOT NULL,
-    /* Allow empty string or strings starting with '.' and containing no additional '.' or path separators */
-    CHECK (
-        `ext` = ""
-        OR (
-            SUBSTR(`ext`, 1, 1) = "."
-            AND INSTR(SUBSTR(`ext`, 2), ".") = 0
-            AND INSTR(`ext`, "/") = 0
-            AND INSTR(`ext`, "{SLASHB}") = 0
+    _logger.debug("iter_files start")
+    batch_file_attrs = list(
+        iter_files(
+            wildcards,
+            gitignore=(
+                None if len(wildcards) == 1 and wildcards[0].startswith("/mnt/f") else project_root(".metadata_ignore")
+            ),
         )
     )
-);
+    _logger.debug("iter_files end")
+    results: dict[str, Munch] = {}
+    if batch_file_attrs:  # paranoia
+        with get_cursor(db_conn()) as cursor:
+            results: dict[str, Munch] = {}
+            # if batch_file_attrs := list(chain.from_iterable(iter_files(f) for f in fnames)):
+            _logger.debug(
+                f"Inserting {len(batch_file_attrs)} file attrs into temporary table `_import`, {batch_file_attrs[0]=}"
+            )
 
-CREATE TABLE IF NOT EXISTS `content` (
-    `id`       INTEGER PRIMARY KEY NOT NULL,
-    `md5`      CHAR(32) UNIQUE NOT NULL,
-    `size`     UNSIGNED INTEGER NOT NULL,
-    `md5_soul` CHAR(32) DEFAULT NULL,  -- see umann.digest.soul
-    CHECK (
-        length(`md5`) = 32
-        AND NOT `md5` GLOB '*[^0-9a-f]*'
-        AND (
-            `md5_soul` IS NULL
-            OR (length(`md5_soul`) = 32 AND NOT `md5_soul` GLOB '*[^0-9a-f]*')
-        )
-    )
-);
+            # cursor.execute("PRAGMA synchronous=OFF")
+            cursor.executemany(
+                "INSERT INTO _import (vol, dir, bas, ext, size, mtime) VALUES (?, ?, ?, ?, ?, ?)",
+                (tuple(f.values()) for f in batch_file_attrs),
+                # map(lambda f: (f.vol, f.dir, f.bas, f.ext, f.size, f.mtime), all_file_attrs)
+            )
+            insert_ignore_cached(cursor, "vol", vol_type(), (f.vol for f in batch_file_attrs))
+            # set_vol = set((f.vol,) for f in batch_file_attrs)
+            # _logger.debug(f"Upserting {len(set_vol)} records into table `vol`")
+            # cursor.executemany(f"INSERT OR IGNORE INTO vol ({vol_type()}) VALUES (?)", set_vol)
 
-CREATE TABLE IF NOT EXISTS `file` (
-    `id`      INTEGER PRIMARY KEY NOT NULL,
-    `vol_id`  INTEGER NOT NULL REFERENCES `vol` (`id`) ON DELETE RESTRICT,
-    `dir_id`  INTEGER NOT NULL REFERENCES `dir` (`id`) ON DELETE RESTRICT,
-    `bas_id`  INTEGER NOT NULL REFERENCES `bas` (`id`) ON DELETE RESTRICT,
-    `ext_id`  INTEGER NOT NULL REFERENCES `ext` (`id`) ON DELETE RESTRICT,
-    `mtime`   REAL NOT NULL, -- unix timestamp. Note: under Windows with Perl, must handle DST bug. Py does this.
-    `chk_ts`  REAL NOT NULL DEFAULT (unixepoch()), -- unix timestamp of last check
-    `content_id`  INTEGER NOT NULL REFERENCES `content` (`id`) ON DELETE RESTRICT,
-    `deleted` INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (`vol_id`, `dir_id`, `bas_id`, `ext_id`)
-);
+            for tbl in ["dir", "bas", "ext"]:
+                insert_ignore_cached(cursor, tbl, tbl, (f[tbl] for f in batch_file_attrs))
+                # set_tbl = set((f[tbl],) for f in batch_file_attrs)
+                # _logger.debug(f"Upserting {len(set_tbl)} records into table `{tbl}`")
+                # cursor.executemany(f"INSERT OR IGNORE INTO {tbl} ({tbl}) VALUES (?)", set_tbl)
 
-/* Ensure bas + ext is not empty string */
-CREATE TRIGGER IF NOT EXISTS file_before_insert_check_bas_ext
-BEFORE INSERT ON file
-FOR EACH ROW
-BEGIN
-    SELECT CASE
-        WHEN (SELECT bas FROM bas WHERE id = NEW.bas_id) || (SELECT ext FROM ext WHERE id = NEW.ext_id) = ''
-        THEN RAISE(ABORT, 'bas + ext cannot be empty string')
-    END;
-END;
+            # Update _import with IDs for faster joins
+            cursor.execute(f"UPDATE _import SET vol_id = (SELECT id FROM vol WHERE vol.`{vol_type()}` = _import.vol)")
+            cursor.execute("UPDATE _import SET dir_id = (SELECT id FROM dir WHERE dir.dir = _import.dir)")
+            cursor.execute("UPDATE _import SET bas_id = (SELECT id FROM bas WHERE bas.bas = _import.bas)")
+            cursor.execute("UPDATE _import SET ext_id = (SELECT id FROM ext WHERE ext.ext = _import.ext)")
 
-{trigger_on_chk_ts('file')}
+            execute(
+                cursor,
+                f"""
+                SELECT
+                    vol.`{vol_type()}` as vol,
+                    dir.dir,
+                    bas.bas,
+                    ext.ext,
+                    imp.vol_id,
+                    imp.dir_id,
+                    imp.bas_id,
+                    imp.ext_id,
+                    imp.size,
+                    imp.mtime,
+                    file.id as file_id,
+                    -- file.deleted
+                    -- imp.size IS NOT NULL and imp.mtime IS NOT NULL as exists,
+                    file.mtime == imp.mtime AND content.size == imp.size as up_to_date,
+                    file_metadata.json as file_metadata_json,
+                    -- file_metadata.id as file_metadata_id,
+                    content_metadata.json as content_metadata_json
+                    -- content_metadata.id as content_metadata_id
+                FROM _import AS imp
+                JOIN vol ON vol.id = imp.vol_id
+                JOIN dir ON dir.id = imp.dir_id
+                JOIN bas ON bas.id = imp.bas_id
+                JOIN ext ON ext.id = imp.ext_id
+                LEFT JOIN file ON
+                    file.vol_id = imp.vol_id AND
+                    file.dir_id = imp.dir_id AND
+                    file.bas_id = imp.bas_id AND
+                    file.ext_id = imp.ext_id
+                LEFT JOIN content ON content.id = file.content_id
+                LEFT JOIN file_metadata ON
+                    file_metadata.file_id = file.id AND file_metadata.cmd_id = :cmd_id
+                LEFT JOIN content_metadata ON
+                    content_metadata.content_id = content.id AND content_metadata.cmd_id = :cmd_id
+                WHERE not done
+                    """,
+                dict(cmd_id=cmd_id),
+            )
 
-CREATE INDEX IF NOT EXISTS `file-dir_id` on file (`dir_id`);
-CREATE INDEX IF NOT EXISTS `file-bas_id` on file (`bas_id`);
-CREATE INDEX IF NOT EXISTS `file-ext_id` on file (`ext_id`);
-CREATE INDEX IF NOT EXISTS `file-content_id` on file (`content_id`);
+            for row in cursor.fetchall():
+                fname = f"{row.vol}{row.dir}{row.bas}{row.ext}"
+                if row.up_to_date:  # and not row.get("deleted", 0):
+                    metadata = {}
+                    for key in ["file_metadata_json", "content_metadata_json"]:
+                        metadata.update(json.loads(row.get(key) or "{}"))
+                    results[fname] = metadata
+                else:
+                    res = Munch(row)
+                    res.update(dict(func=func, fname=fname, cmd_id=cmd_id))
+                    try:
+                        res.md5, res.md5_soul, res.soul_error = extract_soul(
+                            res.fname, "md5", "md5_soul", "soul_error"
+                        )
+                    except Exception as e:  # pylint: disable=broad-except  # TODO
+                        _logger.error(f"Error calculating soul/md5 for {res.fname}: {e}")
+                        continue
 
-CREATE TABLE IF NOT EXISTS file_metadata (
-    `id`      INTEGER PRIMARY KEY NOT NULL,
-    `cmd_id`  INTEGER NOT NULL REFERENCES `cmd` (`id`) ON DELETE RESTRICT,  -- e.g. "exiftool -G1 -struct"
-    `file_id` INTEGER NOT NULL REFERENCES `file` (`id`) ON DELETE CASCADE,
-    `json`    TEXT NOT NULL, -- FS-specific (e.g System: for exiftool -G1) tags
-    `chk_ts`  REAL NOT NULL DEFAULT (unixepoch()), -- unix timestamp of last check
-    UNIQUE (`cmd_id`, `file_id`)
-);
+                    if res.md5_soul:
+                        res.soul_id = get_id(cursor, "soul", uniq=dict(md5_soul=res.md5_soul))
+                    else:
+                        res.soul_id = None
+                    res.content_id, res.content_chg = get_id(
+                        cursor,
+                        "content",
+                        uniq=dict(md5=res.md5),
+                        add=dict(size=res.size, soul_id=res.soul_id),
+                        return_whether_chg=True,
+                    )
+                    if res.soul_error:
+                        insert1(
+                            cursor, "soul_error", add=dict(content_id=res.content_id, **res.soul_error), ignore=True
+                        )
+                    res.file_id = get_id(
+                        cursor,
+                        "file",
+                        dict_only_keys(res, ["vol_id", "dir_id", "bas_id", "ext_id"]),
+                        dict(content_id=res.content_id, mtime=res.mtime, deleted=0),
+                        existing_id=res.file_id,
+                    )
 
-{trigger_on_chk_ts('file')}
+                    results[fname] = _handle_metadata(cursor, res, fname)
+            # if nonexistent := {i for i in set(fnames) - set(results.keys()) if not os.path.exists(i)}:
+            #     delete_nonexistent(cursor, nonexistent)
+            execute(cursor, "UPDATE `_import` SET done = 1")
+            # execute(cursor, "DROP TABLE _import")
+            # dropped_tmp = True
 
-CREATE INDEX IF NOT EXISTS `file_metadata-cmd_id` ON `file_metadata` (`cmd_id`);
-CREATE INDEX IF NOT EXISTS `file_metadata-file_id` ON `file_metadata` (`file_id`);
-CREATE INDEX IF NOT EXISTS `file_metadata-chk_ts` ON `file_metadata` (`chk_ts`);
+    if with_cleanup:
+        cleanup(wildcards)
+        # if cannot_cleanup := [i for i in fnames if not re.search(DIR_PATTERN, urealpath(i))]:
+        # raise ValueError(f"Cannot cleanup non-absolute paths: {cannot_cleanup}")
 
-CREATE TABLE IF NOT EXISTS content_metadata (
-    `id`         INTEGER PRIMARY KEY NOT NULL,
-    `cmd_id`     INTEGER NOT NULL REFERENCES `cmd` (`id`) ON DELETE RESTRICT,  -- e.g. "exiftool -G1 -struct"
-    `content_id` INTEGER NOT NULL REFERENCES `content` (`id`) ON DELETE CASCADE,
-    `json`       TEXT NOT NULL,  -- all content-specific metadata, i.e. no FS-specific
-                                -- (e.g System: for exiftool -G1) tags
-    `chk_ts`     REAL NOT NULL DEFAULT (unixepoch()), -- unix timestamp of last check
-    UNIQUE (`cmd_id`, `content_id`)
-);
-
-{trigger_on_chk_ts('file')}
-
-CREATE INDEX IF NOT EXISTS `content_metadata-cmd_id` ON `content_metadata` (`cmd_id`);
-CREATE INDEX IF NOT EXISTS `content_metadata-content_id` ON `content_metadata` (`content_id`);
-CREATE INDEX IF NOT EXISTS `content_metadata-chk_ts` ON `content_metadata` (`chk_ts`);
-
-/* Clean up old metadata entries with a random timeout between 90 and 120 days */
--- DELETE FROM `content_metadata` WHERE
---    `chk_ts` < CAST(strftime('%s', 'now') - (ABS(random() % 31) + 90) * 86400 AS REAL);
-
-/* Exif metadata highlights.
-Columns names with CamelCase are mapped from EXIF tags as-is. They are also in table content_metadata. */
-CREATE TABLE IF NOT EXISTS `exif` (
-    `id`                   INTEGER PRIMARY KEY NOT NULL,
-    `content_id`           INTEGER NOT NULL REFERENCES `content` (`id`) ON DELETE CASCADE,
-    `ImageWidth`           INTEGER NOT NULL,
-    `ImageHeight`          INTEGER NOT NULL,
-    `Orientation`          TEXT,
-    `Creator`              TEXT,  -- Creator of photo/video, performer of audio
-    `Description`          TEXT,  -- Caption-Abstract of image or title of audio/video
-    `Keywords`             TEXT,  -- comma-separated; same as in keyword, here for easy searching
-    `Rating`               TEXT,
-    `CountryCode`          TEXT,
-    `State`                TEXT,
-    `City`                 TEXT,
-    `Location`             TEXT,
-    `DateTimeOriginal`     TEXT,
-    `OffsetTimeOriginal`   CHAR(6),
-    `GPSLatitude`          REAL,
-    `GPSLongitude`         REAL,
-    `GPSHPositioningError` REAL,
-    `type`             TEXT,  -- content-type like image/jpeg, video/x-msvideo, video/quicktime, video/mp4,
-                                 -- audio/mpeg
---     `taken_ts`             INTEGER,  -- unix timestamp when photo was taken
---     `duration_sec`         REAL,
---     `region`               TEXT,  -- Geo region info. NOTE: not an exif tag, but derived from Keywords
-    `chk_ts`  REAL NOT NULL DEFAULT (unixepoch()), -- unix timestamp of last check
-    UNIQUE (`content_id`)  -- Do not allow the same content to have multiple exif entries,
-    --CHECK (`type` LIKE "image/%" OR `type` LIKE "video/%") = (`ImageWidth` > 0 AND `ImageHeight` > 0),
-    --CHECK (`type` LIKE "image/%") != (`duration_sec` IS NOT NULL)
-);
-CREATE INDEX IF NOT EXISTS `exif-ImageWidth-ImageHeight` on exif (`ImageWidth`, `ImageHeight`);
-CREATE INDEX IF NOT EXISTS `exif-Orientation` on exif (`Orientation`);
-CREATE INDEX IF NOT EXISTS `exif-Creator` on exif (`Creator`);
-CREATE INDEX IF NOT EXISTS `exif-Description` on exif (`Description`);
-CREATE INDEX IF NOT EXISTS `exif-Keywords` on exif (`Keywords`);
-CREATE INDEX IF NOT EXISTS `exif-Rating` on exif (`Rating`);
-CREATE INDEX IF NOT EXISTS `exif-CountryCode` on exif (`CountryCode`);
-CREATE INDEX IF NOT EXISTS `exif-State` on exif (`State`);
-CREATE INDEX IF NOT EXISTS `exif-City` on exif (`City`);
-CREATE INDEX IF NOT EXISTS `exif-Location` on exif (`Location`);
-CREATE INDEX IF NOT EXISTS `exif-DateTimeOriginal` on exif (`DateTimeOriginal`);
-CREATE INDEX IF NOT EXISTS `exif-OffsetTimeOriginal` on exif (`OffsetTimeOriginal`);
-CREATE INDEX IF NOT EXISTS `exif-GPSLatitude-GPSLongitude` on exif (`GPSLatitude`, `GPSLongitude`);
-CREATE INDEX IF NOT EXISTS `exif-GPSHPositioningError` on exif (`GPSHPositioningError`);
--- CREATE INDEX IF NOT EXISTS `exif-taken_ts` on exif (`taken_ts`);
--- CREATE INDEX IF NOT EXISTS `exif-duration_sec` on exif (`duration_sec`);
--- CREATE INDEX IF NOT EXISTS `exif-region` on exif (`region`);
-CREATE INDEX IF NOT EXISTS `exif-chk_ts` on exif (`chk_ts`);
-
-{trigger_on_chk_ts('file')}
-
--- /* as seen in .picasa.ini */
--- CREATE TABLE IF NOT EXISTS `picasa` (
---     `id`      INTEGER PRIMARY KEY NOT NULL,
---     `file_id` INTEGER NOT NULL REFERENCES `file` (`id`) ON DELETE CASCADE,
---     `crop`    TEXT,
---     `faces`   TEXT,
---     `filters` TEXT,
---     `redo`    TEXT,
---     `rotate`  TEXT,
---     `star`    TEXT,
---     `chk_ts`  REAL NOT NULL, -- unix timestamp of last check
---     `json`    TEXT,  -- all the fields (incl. above ones)
---     UNIQUE (`file_id`)
--- );
--- CREATE INDEX IF NOT EXISTS `picasa-crop` on picasa (`crop`);
--- CREATE INDEX IF NOT EXISTS `picasa-faces` on picasa (`faces`);
--- CREATE INDEX IF NOT EXISTS `picasa-filters` on picasa (`filters`);
--- CREATE INDEX IF NOT EXISTS `picasa-redo` on picasa (`redo`);
--- CREATE INDEX IF NOT EXISTS `picasa-rotate` on picasa (`rotate`);
--- CREATE INDEX IF NOT EXISTS `picasa-star` on picasa (`star`);
--- CREATE INDEX IF NOT EXISTS `picasa-chk_ts` on picasa (`chk_ts`);
---
--- {trigger_on_chk_ts('file')}
-
--- This is also in table content_metadata.
-CREATE TABLE IF NOT EXISTS `keyword` (
-    `id` INTEGER PRIMARY KEY NOT NULL,
-    `content_id`     INTEGER NOT NULL REFERENCES `content` (`id`) ON DELETE CASCADE,
-    `keyword`    TEXT NOT NULL,
-    UNIQUE (`content_id`, `keyword`)
-);
-CREATE INDEX IF NOT EXISTS `keyword-keyword` on keyword (`keyword`);
-
-CREATE TABLE IF NOT EXISTS `contact` (
-    `id`  INTEGER PRIMARY KEY NOT NULL,
-    `contact_hex` CHAR(16) UNIQUE,  -- as seen in %APPDATA%\Local\Google\Picasa2\Contacts\contacts.xml
-    `emails`      TEXT, -- comma separated email addresses from %APPDATA%\Local\Google\Picasa2\Contacts\contacts.xml
-    `nick`        TEXT NOT NULL UNIQUE, -- Real Name or nickname of person
-    `namespace`   TEXT DEFAULT NULL, -- DEFAULT "http://umann.hu/kornel/picasa/1.0/",
-    UNIQUE (`nick`, `namespace`),  -- Picasa allows same nick for different contacts, we do not
-
-    CHECK (`contact_hex` IS NULL OR (length(`contact_hex`) BETWEEN 1 AND 16 AND NOT `contact_hex` GLOB '*[^0-9a-f]*'))
-);
-CREATE INDEX IF NOT EXISTS `contact-nick` on contact (`nick`);
-
--- This is also in table content_metadata.
-CREATE TABLE IF NOT EXISTS `face` (
-    `id`    INTEGER PRIMARY KEY NOT NULL,
-    `content_id`     INTEGER NOT NULL REFERENCES `content` (`id`) ON DELETE RESTRICT,
-    `contact_id` INTEGER REFERENCES `contact` (`id`) ON DELETE RESTRICT,
-    -- `name`       TEXT, -- as seen in XMP-mwg-rs:RegionInfo.RegionList[].Name
-    `rect64`     CHAR(16), -- as seen in .picasa.ini
-    `X`          REAL, -- as seen in XMP-mwg-rs:RegionInfo.RegionList[].Area.H (left, percentage of width)
-    `Y`          REAL, -- as seen in XMP-mwg-rs:RegionInfo.RegionList[].Area.V (upper, percentage of height)
-    `W`          REAL, -- as seen in XMP-mwg-rs:RegionInfo.RegionList[].Area.W (width, percentage of width)
-    `H`          REAL, -- as seen in XMP-mwg-rs:RegionInfo.RegionList[].Area.H (height, percentage of height)
-    UNIQUE (`contact_id`, `content_id`, `rect64`),
-    UNIQUE (`contact_id`, `content_id`, `X`, `Y`, `W`, `H`),
-    -- UNIQUE (`name`, `content_id`, `rect64`),
-    -- UNIQUE (`name`, `content_id`, `X`, `Y`, `W`, `H`),
-    UNIQUE (`content_id`, `rect64`),
-    CHECK (
-        `rect64` IS NULL OR ((length(`rect64`) BETWEEN 1 AND 16) AND NOT `rect64` GLOB '*[^0-9a-f]*')
-        AND (
-            (`X` IS NULL AND `Y` IS NULL AND `W` IS NULL AND `H` IS NULL)
-            OR (X BETWEEN 0 AND 1 AND Y BETWEEN 0 AND 1 AND W BETWEEN 0 AND 1 AND H BETWEEN 0 AND 1)
-        )
-        AND (`rect64` IS NOT NULL OR `X` IS NOT NULL)
-        /* AND (`contact_id` IS NOT NULL OR `name` IS NOT NULL) */
-   )
-);
-
-INSERT OR IGNORE INTO vol (win, unx)
-    VALUES {', '.join(f'("{i}:", "/mnt/{i.lower()}")' for i in string.ascii_uppercase)};
-"""
-
-    # -- DELETE FROM `file_attr` WHERE
-    # --    `chk_ts` < CAST(strftime('%s', 'now') - (ABS(random() % 31) + 90) * 86400 AS INTEGER);
-    # print(sqls_str)
-    # sys.exit()
-
-    # sqls_str = re.sub("^ *-- .*\n", "", sqls_str, flags=re.MULTILINE)
-    # sqls_str = re.sub("^ */[*].*?[*]/", "", sqls_str, flags=re.MULTILINE | re.DOTALL)
-
-    sqls = re.split(r"; *\n(?!END)", sqls_str.strip(" \n;"))
-    with get_cursor() as cursor:
-        for sql in sqls:
-            # print(f"--- Executing SQL ---\n{sql.strip()}\n--- End SQL ---")
-            execute(cursor, sql)
+    return results
 
 
-def flat1(data) -> str | None:
-    if isinstance(data, (list, tuple)):
-        data = data[0] if data else None
-    return data
+def cleanup(wildcards: t.Iterable[str]) -> dict[str, Munch]:
+    """Cleanup file metadata cache in batches to avoid SQLite expression limits."""
+    wildcards = list(wildcards)
+    _logger.debug(f"Cleaning up for {len(wildcards)} wildcards")
+    batch_size = 200
 
+    with get_cursor(db_conn()) as cursor:
+        for batch in batch_iter(wildcards, batch_size=batch_size):
+            where_clause, sql_attrs = glob_to_where(batch)
 
-def flat_more(data) -> str | None:
-    if isinstance(data, (list, tuple)):
-        data = ", ".join(data) if data else None
-    return data
+            execute(
+                cursor,
+                f"""\
+                SELECT
+                    file.id,
+                    vol.`{vol_type()}` as vol,
+                    dir.dir,
+                    bas.bas,
+                    ext.ext
+                FROM file
+                JOIN vol ON vol.id = file.vol_id
+                JOIN dir ON dir.id = file.dir_id
+                JOIN bas ON bas.id = file.bas_id
+                JOIN ext ON ext.id = file.ext_id
+                LEFT JOIN _import AS imp ON
+                    vol.`{vol_type()}` = imp.vol
+                    AND dir.dir = imp.dir
+                    AND bas.bas = imp.bas
+                    AND ext.ext = imp.ext
+                WHERE
+                    {where_clause}
+                    AND NOT file.deleted
+                    AND NOT imp.done
+                    -- WTF AND imp.vol IS NULL
+                """,
+                sql_attrs,
+            )
+            for row in cursor.fetchall():
+                _logger.info(f"Cleaning up file id={row.id} {row.vol=} {row.dir=} {row.bas=} {row.ext=}")
+                # _set_file_deleted(cursor, Munch(row))
 
 
 # pylint: disable=too-many-arguments, too-many-locals
@@ -409,122 +279,70 @@ def get_file_rec(
     *,
     func: t.Callable[[str], dict[str, t.Any]] = lambda f: {},
     cmd: str = "",
-    fstat=None,
-    strict: bool = False,
-    on_nonexistent: t.Any = FileNotFoundError,
+    # fstat=None,
+    # strict: bool = False,
+    # on_nonexistent: t.Any = FileNotFoundError,
 ) -> Munch:
     """Get or create file record in memoization database.
 
     :param fname: File name
-    :param func:funstion to call on file
+    :param func:function to call on file
     :param cmd: CLI equivalent of func (to be used in cache key)
-    :param fstat: of fname; if given, spares a system call
-    :param strict: Whether to strictly check file integrity instead of relying on size+mtime
-    :param on_nonexistent: What to do if file does not exist: raise if Exception, or return this value
-    :raises FileNotFoundError: if on_nonexistent is Exception and file not found
-    :raises NotARegularFileError: if the file is not a regular file
-    :raises on_nonexistent: if on_nonexistent is an Exception and file not found
+
     :return metadata dict or on_nonexistent value
     """
 
-    @lru_cache()
-    def _md5_file(fname: str) -> str:
-        return md5_file(fname)
-
-    with suppress(FileNotFoundError):
-        fstat = fstat or os.stat(fname)
-        if not stat.S_ISREG(fstat.st_mode):
-            raise NotARegularFileError(f"Not a regular file: {fname}")
-    size, mtime = (fstat.st_size, fstat.st_mtime) if fstat else (None, None)
-
-    with get_cursor() as cursor:
-        parameters = _get_file_parameters(cursor, cmd, fname)
-        if (res := _get_file_rec(cursor, fname, parameters)) is not None:
-            if (
-                res.size == size
-                and res.mtime == mtime
-                and (not strict or res.md5 == _md5_file(fname))
-                and not res.deleted
-            ):
-                metadata = {}
-                for key in ["file_metadata_json", "content_metadata_json"]:
-                    metadata.update(json.loads(res.get(key) or "{}"))
-                return metadata
-        else:
-            res = DefaultMunch()
-
-        res.update(parameters)
-        res.fname = fname
-        res.func = func
-
-        # return _postprocess_file_rec(cursor, fname, res, size, mtime, func, on_nonexistent)
-        _set_file_deleted(cursor, res)  # deletes file record if there is res.file_id
-
-        if res.content_id:
-            # delete if no more file refers to this content
-            if not select1(cursor, "file", ["id"], dict(content_id=res.content_id)):
-                delete1(cursor, "content", dict(id=res.content_id))
-
-        if size is None:
-            if isinstance(on_nonexistent, Exception):
-                raise on_nonexistent(f"File not found: {res.fname}")
-            return on_nonexistent
-
-        # res.content_id = res.content_id or get_id(
-        #     cursor, "content", uniq=dict(md5=_md5_file(res.fname)), add=dict(size=size, md5_soul=md5_soul(res.fname))
-        # )
-
-        if not res.content_id:
-            md5, md5_soul = extract_soul(res.fname, "md5", "md5_soul")  # .values()
-            res.content_id = get_id(cursor, "content", uniq=dict(md5=md5), add=dict(size=size, md5_soul=md5_soul))
-
-        if not res.file_id:
-            res.update(
-                {"vol_id": get_id(cursor, "vol", {vol_type(): parameters.vol})}
-                | {f"{tbl}_id": get_id(cursor, tbl, {tbl: parameters[tbl]}) for tbl in ["dir", "bas", "ext"]},
-            )
-
-        res.file_id = get_id(
-            cursor,
-            "file",
-            dict_only_keys(res, ["vol_id", "dir_id", "bas_id", "ext_id"]),
-            dict(
-                content_id=res.content_id,
-                mtime=mtime,
-                deleted=0,
-                # chk_ts=chk_ts,
-            ),
-        )
-
-        return _handle_metadata(cursor, res)
+    return get_file_rec_multi([fname], func=func, cmd=cmd)[fname]
 
 
-def _handle_metadata(cursor: sqlite3.Cursor, res: Munch) -> Munch | None:
-    if not has_metadata_ext(res.fname):
-        return None
-    metadata = res.func(res.fname)  # e.g. get_exiftool(res.fname)
+def _handle_metadata(cursor: sqlite3.Cursor, res: Munch, fname: str) -> Munch | None:
+    _logger.debug(f"{res.fname=} {res=}")
+    engine = None
+    if has_metadata_ext(res.fname):
+        engine = res.func.__module__.split(".")[-1]
+    else:
+        res.func = None
+    try:
+        for sidecar in get_config("sidecars", []):
+            if Path(res.fname).match(sidecar["fnmatch"]):
+                assert not res.func, f"Multiple sidecar engines match {res.fname}: {engine} and {sidecar['engine']}"
+                engine = sidecar["engine"]
+                module = importlib.import_module(f"umann.metadata.{engine}")
+                res.func = getattr(module, f"get_{engine}_metadata")
+
+        if not res.func:
+            return None
+        metadata = res.func(res.fname)  # e.g. get_exiftool(res.fname)
+    except Exception as e:  # pylint: disable=broad-except  # TODO
+        _logger.error(f"Error getting metadata for {fname} with {engine=}: {e!r}")
+        metadata = {"Error": type(e).__name__ + ": " + str(e)}
+    # metadata.update({"Umann:md5": res.md5, "Umann:md5_soul": res.md5_soul})
     res.file_metadata, res.content_metadata = split_dict(
-        metadata, lambda x: not x.split(":")[0] in ("System", "Exiftool", "SourceFile")
+        metadata, lambda key_val: key_val[0].split(":")[0] in {"System", "ExifTool", "SourceFile"}
     )
     _handle_content_metadata(cursor, res)
     _handle_file_metadata(cursor, res)
     return metadata or None
 
 
+# pylint: disable=too-many-branches  # TODO
 def _handle_content_metadata(cursor: sqlite3.Cursor, res: Munch) -> None:
+    if res.content_chg is False:
+        return
     has_kw = has_face = res.ext in get_config("picasa.exts", {})
-    if has_kw:
-        delete1(cursor, "keyword", where=dict(content_id=res.content_id))
-    if has_face:
-        delete1(cursor, "face", where=dict(content_id=res.content_id))
-
+    if res.content_chg:
+        if has_kw:
+            delete1(cursor, "content_keyword", where=dict(content_id=res.content_id))
+        if has_face:
+            delete1(cursor, "face", where=dict(content_id=res.content_id))
     if not res.content_metadata:
-        delete1(
-            cursor,
-            "content_metadata",
-            where=dict(cmd_id=res.cmd_id, content_id=res.content_id),
-        )
-        delete1(cursor, "exif", where=dict(content_id=res.content_id))
+        if res.content_chg:
+            delete1(
+                cursor,
+                "content_metadata",
+                where=dict(cmd_id=res.cmd_id, content_id=res.content_id),
+            )
+            delete1(cursor, "digest", where=dict(content_id=res.content_id))
         return
     upsert1(
         cursor,
@@ -532,57 +350,67 @@ def _handle_content_metadata(cursor: sqlite3.Cursor, res: Munch) -> None:
         add=dict(json=json.dumps(res.content_metadata, ensure_ascii=False)),  # , chk_ts=chk_ts),
         uniq=dict(cmd_id=res.cmd_id, content_id=res.content_id),
     )
-    upsert1(
-        cursor,
-        "exif",
-        add=metadata_to_exif_highlights(res.content_metadata),  # | dict(chk_ts=chk_ts),
-        uniq=dict(content_id=res.content_id),
-    )
+    try:
+        upsert1(
+            cursor,
+            "digest",
+            add=metadata_to_digest(res.content_metadata),  # | dict(chk_ts=chk_ts),
+            uniq=dict(content_id=res.content_id),
+        )
+    except Exception as e:  # sqlite3.IntegrityError
+        _logger.error(f"DIGEST ERROR {res.fname=} {e!r}\n{yaml.dump(res.content_metadata)}")
+        raise
     if has_kw:
         # MWG:Keywords prefers XMP over IPTC and handles encoding properly
-        if keywords_raw := res.content_metadata.get("MWG:Keywords", res.content_metadata.get("XMP-dc:Subject")):
-            if not isinstance(keywords_raw, list):  # we use exiftool with -struct so should be list
-                keywords_raw = keywords_raw.split(",")
-            keywords = [kw.strip() for kw in keywords_raw if kw.strip()]
-            insert(cursor, "keyword", [dict(content_id=res.content_id, keyword=kw) for kw in keywords])
+        if keywords := get_keywords_list(res.content_metadata):
+            content_keyword_items: list[dict] = []
+            for keyword in keywords:
+                keyword_id = get_id_cached(cursor, "keyword", keyword=keyword)
+                content_keyword_items.append(dict(content_id=res.content_id, keyword_id=keyword_id))
+            insert(cursor, "content_keyword", content_keyword_items, ignore=True)
     if has_face and (faces := get_multi(res.content_metadata, "XMP-mwg-rs:RegionInfo.RegionList", default=None)):
-        # items: list[dict[str, t.Any]] = []
+        items: list[dict[str, t.Any]] = []
         # TODO: use insert instead of insert1 in loop
         for face in faces:
-            contact_id = None
-            if nick := face.get("Name"):
-                contact_id = get_id(
-                    cursor,
-                    "contact",
-                    dict(
-                        nick=nick,
-                        namespace=flat1(
-                            get_multi(
-                                face,
-                                "Extensions.XMP-Umann:FaceNamespace",
-                                get_config("picasa.namespace", default=None),
-                            )
+            person_id = None
+            try:
+                if nick := face.get("Name"):
+                    person_id = get_id_cached(
+                        cursor,
+                        "person",
+                        **dict(
+                            nick=nick,
+                            namespace=flat1(
+                                get_multi(
+                                    face,
+                                    "Extensions.XMP-Umann:FaceNamespace",
+                                    get_config("picasa.namespace", default=None),
+                                )
+                            ),
+                            hex=flat1(get_multi(face, "Extensions.XMP-Umann:FaceID", default=None)),
                         ),
-                    ),
-                    dict(
-                        emails="",
-                        contact_hex=flat1(get_multi(face, "Extensions.XMP-Umann:FaceID", default=None)),
-                    ),
-                )
-            insert1(
-                cursor,
-                "face",
+                        # dict(
+                        #     emails="",
+                        # ),
+                    )
+            except Exception as e:  # sqlite3.IntegrityError  # pylint: disable=broad-except  # TODO
+                _logger.error(f"FACE ERROR 1 {res.fname=} {e!r} {face=}\n{yaml.dump(faces)}")
+            items.append(
                 dict(
                     content_id=res.content_id,
-                    contact_id=contact_id,
+                    person_id=person_id,
                     # name=nick,
                     rect64=flat1(get_multi(face, "Extensions.XMP-Umann:FaceRect64", default=None)),
-                    X=get_multi(face, "Area.H", default=None),
-                    Y=get_multi(face, "Area.Y", default=None),
-                    W=get_multi(face, "Area.W", default=None),
-                    H=get_multi(face, "Area.H", default=None),
-                ),
+                    X=flat1(get_multi(face, "Area.H", default=None)),
+                    Y=flat1(get_multi(face, "Area.Y", default=None)),
+                    W=flat1(get_multi(face, "Area.W", default=None)),
+                    H=flat1(get_multi(face, "Area.H", default=None)),
+                )
             )
+        try:
+            insert(cursor, "face", items)
+        except Exception as e:  # sqlite3.IntegrityError  # pylint: disable=broad-except  # TODO
+            _logger.error(f"FACE ERROR 2 {res.fname=} {e!r}\n{yaml.dump(faces)}")
 
 
 def _handle_file_metadata(cursor: sqlite3.Cursor, res: Munch) -> None:
@@ -605,301 +433,218 @@ def has_metadata_ext(fname: str) -> bool:
     return os.path.splitext(fname)[1] in get_config("metadata.exts", {})
 
 
-def _get_file_parameters(cursor: sqlite3.Cursor, cmd: str, fname: str) -> Munch:
-    if match := FULLPATH_PATTERN.search(abs_path := urealpath(fname)):
-        # vol, dir, bas, ext
-        return Munch(match.groupdict() | dict(cmd_id=get_id_cached(cursor, "cmd", cmd=cmd)))
-    raise ValueError(f"Cannot parse volume, dir, bas, ext from fname={fname!r} (abs_path={abs_path!r})")
-
-
-def _get_file_rec(cursor: sqlite3.Cursor, fname: str, parameters: Munch[str, str]) -> Munch | None:
-
-    if has_metadata_ext(fname):
-        select_metadata = """,
-file_metadata.json as file_metadata_json,
-file_metadata.id as file_metadata_id,
-content_metadata.json as content_metadata_json,
-content_metadata.id as content_metadata_id"""
-        join_metadata = """\
-LEFT JOIN file_metadata    ON
-    file_metadata.file_id = file.id AND file_metadata.cmd_id = :cmd_id
-LEFT JOIN content_metadata ON
-    content_metadata.content_id = content.id AND content_metadata.cmd_id = :cmd_id"""
-    else:
-        select_metadata = ""
-        join_metadata = ""
-
-    # def _md5_soul_file(fname: str) -> str:
-    #     return md5_soul(fname)
-
-    execute(
-        cursor,
-        f"""\
-SELECT
-    file.id as file_id,
-    file.mtime,
-    file.deleted,
-    dir.id as dir_id,
-    bas.id as bas_id,
-    content.id as content_id,
-    content.size,
-    content.md5,
-    content.md5_soul{select_metadata}
-FROM file
-    JOIN vol          ON vol.id = file.vol_id
-    JOIN dir          ON dir.id = file.dir_id
-    JOIN bas          ON bas.id = file.bas_id
-    JOIN ext          ON ext.id = file.ext_id
-    LEFT JOIN content ON content.id = file.content_id
-{join_metadata}
-WHERE
-    vol.`{vol_type()}` = :vol
-    AND dir.dir = :dir
-    AND bas.bas = :bas
-    AND ext.ext = :ext""",
-        parameters,
-    )
-    return cursor.fetchone()
-
-
-def _set_file_deleted(cursor: sqlite3.Cursor, res: Munch, cleanup: bool = False):
-    if not res.file_id:
-        return
-    # delete1(cursor, "file", dict(id=res.file_id))
-    update1(cursor, "file", add=dict(deleted=1), where=dict(id=res.file_id))
-    if cleanup:
-        # Check if there are any other files referencing the same bas, ext, content
-        tbls = ["dir", "content"]
-        if res.bas not in {".picasa"}:  # skip bas cleanup chk for .picasa files, there's a lot of them
-            tbls.append("bas")
-        for tbl in tbls:
-            execute(cursor, f"SELECT file.id FROM file JOIN {tbl} ON {tbl}.id = file.{tbl}_id LIMIT 1")
-            if cursor.fetchone() is None:
-                delete1(cursor, tbl, dict(id=res[f"{tbl}_id"]))
-
-
-def metadata_to_exif_highlights(metadata: dict[str, t.Any]) -> dict[str, t.Any]:
-    """Convert a metadata dict as returned by exiftool to a flat dict with EXIF tag names as keys.
+def get_duration_s(metadata: dict[str, t.Any]) -> float | None:
+    """Get duration in seconds from metadata dict.
 
     Args:
-        metadata: Metadata dict as returned by exiftool
+        metadata: Metadata dict as returned by exiftool (or whatever)
+    """
+    for key in ("Composite:Duration", "Track1:Duration", "QuickTime:Duration"):
+        if ret := metadata.get(key):
+            ret = ret.removesuffix(" (approx)").strip()
+            ret = ret.removesuffix(" s").strip()
+            if match := re.match(r"^(?:(\d+):)?(?:(\d+):)?(\d+(?:\.\d+)?)$", ret):
+                hours = int(match.group(1) or "0")
+                minutes = int(match.group(2) or "0")
+                seconds = float(match.group(3) or "0")
+                return hours * 3600 + minutes * 60 + seconds
+    return None
+
+
+def get_artist(metadata: dict[str, t.Any]) -> str | None:
+    """Get artist from metadata dict.
+
+    Args:
+        metadata: Metadata dict as returned by exiftool (or whatever)
+    """
+    return (
+        flat_more(metadata.get("MWG:Creator"))
+        or metadata.get("ID3v2_3:Artist")
+        or metadata.get("ID3v1:Artist")
+        or None
+    )
+
+
+def get_title(metadata: dict[str, t.Any]) -> str | None:
+    return metadata.get("MWG:Description") or metadata.get("ID3v2_3:Title") or metadata.get("ID3v1:Title") or None
+
+
+def get_album(metadata: dict[str, t.Any]) -> str | None:
+    return metadata.get("ID3v2_3:Album") or metadata.get("ID3v1:Album") or None
+
+
+def get_track(metadata: dict[str, t.Any]) -> str | None:
+    ret = metadata.get("ID3v2_3:Track") or metadata.get("ID3v1:Track")
+    return str(ret) if ret is not None and ret != "" else None
+
+
+def get_keywords_list(metadata: dict[str, t.Any]) -> list[str]:
+    for tag in ("MWG:Keywords", "XMP-dc:Subject", "ID3v2_3:Comments", "ID3v1:Comments"):
+        if keywords := deep_split(metadata.get(tag)):
+            return keywords
+    return []
+
+
+def get_rating(metadata: dict[str, t.Any]) -> str:
+    """Get popularity from metadata dict."""
+    ret = metadata.get("MWG:Rating")
+    if ret is not None and ret != "":
+        return str(ret)
+    return get_popularity(metadata) or None
+
+
+def get_popularity(metadata: dict[str, t.Any]) -> str:
+    """Get popularity from metadata dict.
+
+    Looking for rating=(integer) in ID3v2_3:Popularimeter
+    Winamp uses 0 .. 255. I use 0 .. 10 scale. So convert as follows:
+    multiples or 25 in this range are divided 25
+    Other integers are zero-padded to 3 digits.
+    Other values are returns as-is
+
+    >>> get_popularity({"ID3v2_3:Popularimeter": "Rating=125"})
+    '5'
+    >>> get_popularity({"ID3v2_3:Popularimeter": "rating@winamp.com Rating=250 Count=0"})
+    '10'
+    >>> get_popularity({"ID3v2_3:Popularimeter": "Rating=17"})
+    '17'
+    >>> get_popularity({"ID3v2_3:Popularimeter": "Rating=300"})
+    '300'
+    >>> get_popularity({"ID3v2_3:Popularimeter": "SomeOtherValue"})
+    'SomeOtherValue'
+    """
+    ret = metadata.get("ID3v2_3:Popularimeter")
+    if match := re.match(r"Rating\s*=\s*(\d+)(?!\d)", str(ret or ""), flags=re.IGNORECASE):
+        ret = int(match.group(1))
+        if 0 <= ret <= 250 and ret % 25 == 0:
+            return str(int(ret / 25))
+        return f"{ret:0>3}"
+    return ret
+
+
+def get_date_time_original(metadata: dict[str, t.Any]) -> str | None:
+    """Get DateTimeOriginal from metadata dict.
+
+    Args:
+        metadata: Metadata dict as returned by exiftool (or whatever)
+    """
+    return metadata.get("ExifIFD.DateTimeOriginal") or metadata.get("ID3v1:Year") or None
+
+
+def get_width(metadata: dict[str, t.Any]) -> int | None:
+    """Get width from metadata dict.
+
+    Args:
+        metadata: Metadata dict as returned by exiftool (or whatever)
+    """
+    for key in ("File:ImageWidth", "EXIF:ImageWidth", "Track1:ImageHeight"):
+        width = metadata.get(key)
+        if width is not None:
+            return int(width)
+    if match := re.match(r"^(\d+)\D+(\d+)$", str(metadata.get("Composite:ImageSize") or "")):
+        return int(match[1])
+    return None
+
+
+def get_height(metadata: dict[str, t.Any]) -> int | None:
+    """Get height from metadata dict.
+
+    Args:
+        metadata: Metadata dict as returned by exiftool (or whatever)
+    """
+    for key in ("File:ImageHeight", "EXIF:ImageHeight", "Track1:ImageHeight"):
+        height = metadata.get(key)
+        if height is not None:
+            return int(height)
+    if match := re.match(r"^(\d+)\D+(\d+)$", str(metadata.get("Composite:ImageSize") or "")):
+        return int(match[2])
+    return None
+
+
+def join_for_digest(strings: list[str]) -> str:
+    """Join list of strings into a single string for digest calculation.
+
+    Args:
+        strings: List of strings
 
     Returns:
-        Flat dict with EXIF tag names as keys
+        Joined string by single semicolon without spaces, with leading and trailing semicolons
+    >>> join_for_digest(['apple', 'banana', 'cherry'])
+    ';apple;banana;cherry;'
+    >>> join_for_digest(['apple'])
+    ';apple;'
+    >>> join_for_digest([])
+    ';'
+    >>> join_for_digest(None)
+    ';'
     """
+    joiner = ";"
+    return joiner + "".join(f"{s}{joiner}" for s in strings or [])
 
-    keywords_str = flat_more(metadata.get("MWG:Keywords"))
-    creator = flat_more(metadata.get("MWG:Creator", "")).strip() or None
+
+def get_face_names(metadata: dict[str, t.Any]) -> list[str]:
+    """Get list of known faces from metadata dict.
+
+    Args:
+        metadata: Metadata dict as returned by exiftool (or whatever)
+    """
+    return locale_sorted(
+        set(
+            face.get("Name")
+            for face in get_multi(metadata, "XMP-mwg-rs:RegionInfo.RegionList", default=[])
+            if face.get("Name")
+        )
+    )
+
+
+def get_known_face_names(metadata: dict[str, t.Any]) -> list[str]:
+    """Get list of known faces from metadata dict.
+
+    Args:
+        metadata: Metadata dict as returned by exiftool (or whatever)
+    """
+    return [f for f in uniq_keep_order(get_face_names(metadata)) if f[0].isupper()]
+
+
+def get_other_face_names(metadata: dict[str, t.Any]) -> list[str]:
+    """Get list of other faces from metadata dict.
+
+    Args:
+        metadata: Metadata dict as returned by exiftool (or whatever)
+    """
+    return [f for f in uniq_keep_order(get_face_names(metadata)) if not f[0].isupper()]
+
+
+def metadata_to_digest(metadata: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Convert metadata for table `digest`.
+
+    Args:
+        metadata: Metadata dict as returned by exiftool (or whatever)
+
+    Returns:
+        Flat dict with table `digest` column names as keys
+    """
     return dict(
-        ImageWidth=metadata.get("File:ImageWidth"),
-        ImageHeight=metadata.get("File:ImageHeight"),
-        Orientation=metadata.get("IFD0.Orientation"),
-        Creator=creator,
-        Description=metadata.get("MWG:Description"),
-        Keywords=keywords_str,
-        Rating=metadata.get("MWG:Rating"),
-        CountryCode=metadata.get("XMP-iptcCore.CountryCode"),
-        State=metadata.get("MWG:State"),
-        City=metadata.get("MWG:City"),
-        Location=metadata.get("MWG:Location"),
-        DateTimeOriginal=metadata.get("ExifIFD.DateTimeOriginal"),
-        OffsetTimeOriginal=metadata.get("EXIF.OffsetTimeOriginal"),
-        GPSLatitude=metadata.get("EXIF.GPSLatitude"),
-        GPSLongitude=metadata.get("EXIF.GPSLongitude"),
-        GPSHPositioningError=metadata.get("XMP-exif.GPSHPositioningError"),
+        width=get_width(metadata),
+        height=get_height(metadata),
+        orientation=metadata.get("IFD0.Orientation"),
+        artist=get_artist(metadata),
+        title=get_title(metadata),
+        keywords=join_for_digest(get_keywords_list(metadata)),
+        known_faces=join_for_digest(get_known_face_names(metadata)),
+        other_faces=join_for_digest(get_other_face_names(metadata)),
+        album=get_album(metadata),
+        track=get_track(metadata),
+        rating=get_rating(metadata),
+        tld=metadata.get("XMP-iptcCore.CountryCode"),
+        state=metadata.get("MWG:State"),
+        city=metadata.get("MWG:City"),
+        location=metadata.get("MWG:Location"),
+        date_time_original=get_date_time_original(metadata),
+        tz_offset=metadata.get("EXIF.OffsetTimeOriginal"),
+        lat=metadata.get("EXIF.GPSLatitude"),
+        lon=metadata.get("EXIF.GPSLongitude"),
+        pos_accuracy_m=metadata.get("XMP-exif.GPSHPositioningError"),
+        mime_type=metadata.get("File:MIMEType"),
+        duration_s=get_duration_s(metadata),
     )
-
-
-@lru_cache
-def get_id_cached(cursor: sqlite3.Cursor, table: str, **uniq) -> int:
-    """
-    Upsert a dictionary into a SQLite table and return PK id without option to add extra column values
-
-    :param cursor: SQLite cursor object
-    :param str table: Name of the table to insert into
-    :param dict uniq: keys are column names and values are WHERE to search for/insert
-    :return int: PK id value
-    """
-    return get_id(cursor, table, uniq)
-
-
-def get_id(
-    cursor, table: str, uniq: dict, add: dict | None = None, return_whether_chg: bool = False
-) -> int | tuple[int, bool]:
-    """
-    Upsert a dictionary into a SQLite table and return PK id
-
-    :param cursor: SQLite cursor object
-    :param str table: Name of the table to insert into
-    :param dict uniq: keys are column names and values are WHERE to search for/insert
-    :param dict|None add: additional values to set, defaults to None
-    :param bool return_whether_chg: whether to return if a change (insert or update) happened, defaults to False
-    :return int | tuple[int,bool]: PK id value or (PK id value, whether_chg) if return_whether_chg is True
-    """
-    add = add or {}
-
-    pk_ = "id"
-    if res := select1(cursor, table, [pk_, *add.keys()], uniq):
-        id_ = res.pop(pk_)
-        if whether_chg := res != add:
-            update1(cursor, table, add, uniq)
-    else:
-        id_ = insert1(cursor, table, {**uniq, **add})
-        whether_chg = True
-    return (id_, whether_chg) if return_whether_chg else id_
-
-
-def select1(cursor: sqlite3.Cursor, table, columns, where) -> dict | None:
-    placeholders, values = placeholder_and_values(where)
-    sql = f"SELECT {backtick(columns)} FROM `{table}` WHERE {placeholders}"
-    execute(cursor, sql, values)
-    return cursor.fetchone() or None
-
-
-def update1(cursor: sqlite3.Cursor, table, add, where, debug: bool = False):
-    s_placeholders, s_values = placeholder_and_values(add, "update")
-    w_placeholders, w_values = placeholder_and_values(where)
-    sql = f"UPDATE {backtick(table)} SET {s_placeholders} WHERE {w_placeholders}"
-    if debug:
-        print(f"UPDATE {table} SET {add} WHERE {where} sql", file=sys.stderr)
-    execute(cursor, sql, s_values + w_values)
-
-
-def delete1(cursor: sqlite3.Cursor, table, where, debug: bool = False):
-    placeholders, values = placeholder_and_values(where)
-    sql = f"DELETE FROM {backtick(table)} WHERE {placeholders}"
-    if debug:
-        print(sql, values, file=sys.stderr)
-    execute(cursor, sql, values)
-
-
-def upsert1(cursor: sqlite3.Cursor, table: str, add: dict, uniq: dict, debug: bool = False) -> int:
-    """Upsert a row and return its primary key id.
-
-    Args:
-        cursor: SQLite cursor
-        table: Table name
-        add: Columns to insert or update
-        uniq: Unique constraint columns (used for ON CONFLICT)
-        debug: Enable debug output
-
-    Returns:
-        Primary key id of the inserted or updated row
-    """
-    placeholders_insert, values_insert = placeholder_and_values(add | uniq, "insert")
-    placeholders_conflict, values_conflict = placeholder_and_values(add, "update")
-
-    sql = f"""\
-INSERT INTO {backtick(table)} ({backtick((add | uniq).keys())})
-VALUES ({placeholders_insert})
-ON CONFLICT({backtick(uniq.keys())}) DO UPDATE SET {placeholders_conflict}
-RETURNING id\
-"""
-    if debug:
-        print("UPSERT", add, uniq, file=sys.stderr)
-        print(sql, values_insert + values_conflict, file=sys.stderr)
-
-    execute(cursor, sql, values_insert + values_conflict)
-    return cursor.fetchone()["id"]
-
-
-def insert1(cursor: sqlite3.Cursor, table: str, add: dict, ignore: bool = False, debug: bool = False) -> int:
-    placeholders, values = placeholder_and_values(add, "insert")
-    command = "INSERT OR IGNORE" if ignore else "INSERT"
-    if debug:
-        print(command, add, file=sys.stderr)
-    sql = f"{command} INTO {backtick(table)} ({backtick(add.keys())}) values ({placeholders})"
-    execute(cursor, sql, values)
-    return cursor.lastrowid
-
-
-def insert(cursor: sqlite3.Cursor, table: str, add: list[dict], ignore: bool = False, debug: bool = False) -> int:
-    if not add:
-        return None
-    values = tuple(v for d in add for v in d.values())
-    command = "INSERT OR IGNORE" if ignore else "INSERT"
-    if debug:
-        print(command, add, file=sys.stderr)
-    sql = (
-        f"{command} INTO {backtick(table)} ({backtick(add[0].keys())})"
-        + f" values {', '.join(['(' + ', '.join(['?'] * len(add[0])) + ')'] * len(add))}"
-    )
-    execute(cursor, sql, values)
-    return cursor.lastrowid
-
-
-def execute(cursor: sqlite3.Cursor, sql: str, parameters: tuple | dict = ()):
-    try:
-        return cursor.execute(sql, parameters)
-    except sqlite3.Error as e:
-        # Show SQL with parameters substituted for easier debugging
-        try:
-            if isinstance(parameters, dict):
-                # Named parameters: replace :name with values
-                sql_with_params = sql
-                for key, value in parameters.items():
-                    sql_with_params = sql_with_params.replace(f":{key}", repr(value))
-            else:
-                # Positional parameters: replace ? with values
-                sql_with_params = sql
-                for value in parameters:
-                    sql_with_params = sql_with_params.replace("?", repr(value), 1)
-        except TypeError as e2:
-            # Fallback if substitution fails
-            sql_with_params = f"{sql}\n-- Parameters: {parameters}"
-            raise sqlite3.Warning(f"{e!r}\n>>>\n{sql_with_params.strip()}\n<<<") from e2
-
-        raise sqlite3.Warning(f"{e!r}\n>>>\n{sql_with_params.strip()}\n<<<") from e
-
-
-def backtick(columns) -> str:
-    if isinstance(columns, str):
-        columns = [columns]
-    return ", ".join(f"`{c}`" for c in columns)
-
-
-def placeholder_and_values(where: dict, action: t.Literal["insert", "update", "where"] = "where") -> tuple[str, tuple]:
-    if action == "insert":
-        placeholders = ", ".join(["?"] * len(where))
-    else:  # update or where
-        delimiter = ", " if action == "update" else " AND "
-        placeholders = delimiter.join(f"{backtick(k)}=?" for k in where.keys())
-    values = tuple(where.values())
-    return placeholders, values
-
-
-# def get_memoized(fname, attr, function, stat=None):
-#     """With stat, a 2nd call to os.stat can be saved if provided by caller"""
-#     with get_cursor() as cursor:
-#         file_rec = get_file_rec(cursor, fname, attr, stat)
-#         if file_rec.blb is not None:
-#             return decode(file_rec.blb)
-#         value = function(fname)
-#         if isinstance(value, dict):
-#             value = {k: v for k, v in value.items() if v is not None and v != ""}
-#         insert1(
-#             cursor,
-#             "content_metadata",
-#             {"file_id": file_rec.file_id, "attr": attr, "blb": encode(value), "chk_ts": int(time.time())},
-#         )
-#         return value
-
-
-# def encode(obj):
-#     return re.sub(
-#         r"(?:\n[.][.][.])?\n$", "", yaml.dump(obj, default_flow_style=True, width=1_000)
-#     )  # pickle.dumps(obj)
-
-
-# def decode(BLOB):
-#     return yaml.safe_load(BLOB)  # pickle.loads(BLOB)
-
-
-init()
-
-
-# -- LEFT JOIN bas as pbas on pbas.bas = '.picasa'
-# -- LEFT JOIN ext as pext on pext.ext = '.ini'
-# -- LEFT JOIN file as pfile ON
-# --    pfile.vol_id = file.vol_id AND pfile.dir_id = file.dir_id
-# --    AND pfile.bas_id = pbas.id AND pfile.ext_id = pext.id
